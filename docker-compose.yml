@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: menzo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: menzo
+      POSTGRES_USER: menzo
+      POSTGRES_PASSWORD: menzo
+    ports:
+      - "5432:5432"
+    volumes:
+      - menzo-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U menzo -d menzo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  menzo-postgres-data:
