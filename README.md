@@ -112,3 +112,4 @@ recientemente y búsquedas recientes por usuario.
   (`favorite`, `likedByMe`, `bookmarkedByMe`, `attendingByMe`, `followedByMe`) porque el
   backend sí es multiusuario.
 - `MAIN_ROOM_ID` del store local corresponde a la sala con `slug: "main"` en esta API.
+"# menzoapi" 
