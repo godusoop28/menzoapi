@@ -40,6 +40,7 @@ public class ProfileMapper {
                 user.getUsername(),
                 user.getAvatarUri(),
                 user.getAvatarGradient(),
+                user.getCoverUri(),
                 user.getAura().getId(),
                 user.getBio(),
                 user.getStatusText(),

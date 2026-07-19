@@ -56,6 +56,9 @@ public class User {
     @Column(name = "avatar_gradient", nullable = false, length = 30)
     private String avatarGradient = "fire";
 
+    @Column(name = "cover_uri", columnDefinition = "text")
+    private String coverUri;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "aura_id", nullable = false)
     private Aura aura;

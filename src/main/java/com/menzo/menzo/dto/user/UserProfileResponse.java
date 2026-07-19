@@ -10,6 +10,7 @@ public record UserProfileResponse(
         String username,
         String avatarUri,
         String avatarGradient,
+        String coverUri,
         String aura,
         String bio,
         String statusText,

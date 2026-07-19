@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
+import com.menzo.menzo.dto.chat.CreateRoomRequest;
 import com.menzo.menzo.dto.chat.MessageResponse;
 import com.menzo.menzo.dto.chat.SendMessageRequest;
 import com.menzo.menzo.dto.common.PageResponse;
@@ -39,6 +40,12 @@ public class ChatController {
     @GetMapping
     public List<ChatRoomResponse> listRooms(@AuthenticationPrincipal User viewer) {
         return chatService.listRooms(viewer);
+    }
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public ChatRoomResponse createRoom(@AuthenticationPrincipal User me, @Valid @RequestBody CreateRoomRequest request) {
+        return chatService.createRoom(me, request);
     }
 
     @GetMapping("/{id}")

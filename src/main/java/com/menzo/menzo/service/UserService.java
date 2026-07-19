@@ -190,11 +190,21 @@ public class UserService {
         if (request.displayName() != null) {
             me.setDisplayName(request.displayName().trim());
         }
+        if (request.username() != null) {
+            String username = request.username().trim().toLowerCase(Locale.ROOT);
+            if (!username.equalsIgnoreCase(me.getUsername()) && userRepository.existsByUsernameIgnoreCase(username)) {
+                throw new ConflictException("Ese nombre de usuario ya está en uso");
+            }
+            me.setUsername(username);
+        }
         if (request.avatarUri() != null) {
             me.setAvatarUri(request.avatarUri());
         }
         if (request.avatarGradient() != null) {
             me.setAvatarGradient(request.avatarGradient());
+        }
+        if (request.coverUri() != null) {
+            me.setCoverUri(request.coverUri());
         }
         if (request.aura() != null) {
             Aura aura = auraRepository.findById(request.aura())

@@ -16,6 +16,7 @@ import com.menzo.menzo.domain.chat.RoomMember;
 import com.menzo.menzo.domain.chat.RoomType;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
+import com.menzo.menzo.dto.chat.CreateRoomRequest;
 import com.menzo.menzo.dto.chat.MessageResponse;
 import com.menzo.menzo.dto.chat.SendMessageRequest;
 import com.menzo.menzo.dto.common.PageResponse;
@@ -68,6 +69,24 @@ public class ChatService {
                 .orElseThrow(() -> new NotFoundException("Sala no encontrada"));
         requireCanAccess(room, viewer);
         return toRoomResponse(room, viewer);
+    }
+
+    @Transactional
+    public ChatRoomResponse createRoom(User me, CreateRoomRequest request) {
+        ChatRoom room = new ChatRoom();
+        room.setType(RoomType.PUBLIC);
+        room.setName(request.name().trim());
+        room.setDescription(request.description() != null ? request.description().trim() : "");
+        room.setTopic(request.topic() != null ? request.topic().trim() : "");
+        if (request.gradient() != null && !request.gradient().isBlank()) {
+            room.setGradient(request.gradient());
+        }
+        if (request.icon() != null && !request.icon().isBlank()) {
+            room.setIcon(request.icon());
+        }
+        room = chatRoomRepository.save(room);
+        roomMemberRepository.save(new RoomMember(room.getId(), me.getId()));
+        return toRoomResponse(room, me);
     }
 
     @Transactional
