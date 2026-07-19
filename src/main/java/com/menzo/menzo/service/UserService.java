@@ -119,7 +119,10 @@ public class UserService {
     }
 
     @Transactional
-    public UserProfileResponse completeOnboarding(User me, OnboardingRequest request) {
+    public UserProfileResponse completeOnboarding(User principal, OnboardingRequest request) {
+        User me = userRepository.findById(principal.getId())
+                .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
+
         String username = request.username().trim().toLowerCase(Locale.ROOT);
         if (!username.equalsIgnoreCase(me.getUsername()) && userRepository.existsByUsernameIgnoreCase(username)) {
             throw new ConflictException("Ese nombre de usuario ya está en uso");
@@ -144,7 +147,11 @@ public class UserService {
             me.getInterests().add(interest);
         }
 
-        me.getBadges().add(new UserBadge(NEWCOMER_BADGE_ID, Instant.now()));
+        boolean alreadyHasNewcomerBadge = me.getBadges().stream()
+                .anyMatch(badge -> badge.getBadgeId().equals(NEWCOMER_BADGE_ID));
+        if (!alreadyHasNewcomerBadge) {
+            me.getBadges().add(new UserBadge(NEWCOMER_BADGE_ID, Instant.now()));
+        }
 
         userRepository.save(me);
 
@@ -175,7 +182,10 @@ public class UserService {
     }
 
     @Transactional
-    public UserProfileResponse updateProfile(User me, UpdateProfileRequest request) {
+    public UserProfileResponse updateProfile(User principal, UpdateProfileRequest request) {
+        User me = userRepository.findById(principal.getId())
+                .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
+
         if (request.displayName() != null) {
             me.setDisplayName(request.displayName().trim());
         }
