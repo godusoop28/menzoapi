@@ -10,7 +10,7 @@ COPY src ./src
 RUN mvn -B -q clean package -DskipTests
 
 # --- Run stage ---
-FROM eclipse-temurin:23-jre-jammy
+FROM eclipse-temurin:23-jre-noble
 WORKDIR /app
 
 RUN useradd --system --create-home appuser
