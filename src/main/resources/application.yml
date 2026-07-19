@@ -84,6 +84,8 @@ logging:
   level:
     com.menzo: DEBUG
     org.hibernate.SQL: DEBUG
+    org.flywaydb: DEBUG
+    org.springframework.boot.autoconfigure.flyway: DEBUG
 
 menzo:
   seed:
