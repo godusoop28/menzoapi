@@ -126,28 +126,34 @@ public class PostService {
         return toPostResponse(post, author.getId());
     }
 
+    @Transactional(readOnly = true)
     public PostResponse getPost(UUID postId, User viewer) {
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new NotFoundException("Publicación no encontrada"));
         return toPostResponse(post, viewer != null ? viewer.getId() : null);
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<PostResponse> listFeed(Pageable pageable, User viewer) {
         return toPageResponse(postRepository.findAllByOrderByCreatedAtDesc(pageable), viewer);
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<PostResponse> listFeatured(Pageable pageable, User viewer) {
         return toPageResponse(postRepository.findByFeaturedTrueOrderByCreatedAtDesc(pageable), viewer);
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<PostResponse> listByAuthor(UUID authorId, Pageable pageable, User viewer) {
         return toPageResponse(postRepository.findByAuthorIdOrderByCreatedAtDesc(authorId, pageable), viewer);
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<PostResponse> listBookmarked(User viewer, Pageable pageable) {
         return toPageResponse(postRepository.findBookmarkedByUser(viewer.getId(), pageable), viewer);
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<PostResponse> search(String query, Pageable pageable, User viewer) {
         return toPageResponse(postRepository.search(query, pageable), viewer);
     }
@@ -247,6 +253,7 @@ public class PostService {
         return toCommentResponse(comment);
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<CommentResponse> listComments(UUID postId, Pageable pageable) {
         return PageResponse.of(
                 commentRepository.findByPostIdOrderByCreatedAtAsc(postId, pageable),

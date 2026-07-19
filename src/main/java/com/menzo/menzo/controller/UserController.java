@@ -82,7 +82,7 @@ public class UserController {
 
     @GetMapping("/users/search")
     public PageResponse<UserProfileResponse> search(
-            @RequestParam String query,
+            @RequestParam(required = false, defaultValue = "") String query,
             @PageableDefault(size = 20) Pageable pageable,
             @AuthenticationPrincipal User viewer) {
         return userService.search(query, pageable, viewer);

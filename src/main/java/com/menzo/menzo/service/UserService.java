@@ -101,6 +101,7 @@ public class UserService {
         this.profileMapper = profileMapper;
     }
 
+    @Transactional(readOnly = true)
     public UserProfileResponse getProfile(UUID targetId, User viewer) {
         User target = userRepository.findById(targetId)
                 .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
@@ -247,6 +248,7 @@ public class UserService {
         followRepository.deleteByFollowerIdAndFollowingId(me.getId(), targetId);
     }
 
+    @Transactional(readOnly = true)
     public List<UserProfileResponse> getFollowers(UUID userId, User viewer) {
         UUID viewerId = viewer != null ? viewer.getId() : null;
         return followRepository.findByFollowingId(userId).stream()
@@ -257,6 +259,7 @@ public class UserService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public List<UserProfileResponse> getFollowing(UUID userId, User viewer) {
         UUID viewerId = viewer != null ? viewer.getId() : null;
         return followRepository.findByFollowerId(userId).stream()
@@ -267,6 +270,7 @@ public class UserService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<UserProfileResponse> search(String query, Pageable pageable, User viewer) {
         UUID viewerId = viewer != null ? viewer.getId() : null;
         Page<User> results = userRepository.search(query, pageable);
@@ -350,6 +354,7 @@ public class UserService {
         return toWallMessageResponse(message);
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<WallMessageResponse> listWallMessages(UUID profileId, Pageable pageable) {
         return PageResponse.of(
                 wallMessageRepository.findByProfileIdOrderByCreatedAtDesc(profileId, pageable),

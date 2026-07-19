@@ -47,12 +47,14 @@ public class ChatService {
         this.profileMapper = profileMapper;
     }
 
+    @Transactional(readOnly = true)
     public List<ChatRoomResponse> listRooms(User viewer) {
         return chatRoomRepository.findAll().stream()
                 .map(room -> toRoomResponse(room, viewer))
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public ChatRoomResponse getRoom(UUID roomId, User viewer) {
         ChatRoom room = chatRoomRepository.findById(roomId)
                 .orElseThrow(() -> new NotFoundException("Sala no encontrada"));
@@ -110,6 +112,7 @@ public class ChatService {
         return toMessageResponse(message);
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<MessageResponse> listMessages(UUID roomId, Pageable pageable) {
         if (!chatRoomRepository.existsById(roomId)) {
             throw new NotFoundException("Sala no encontrada");

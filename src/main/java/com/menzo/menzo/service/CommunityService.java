@@ -47,6 +47,7 @@ public class CommunityService {
         this.userRepository = userRepository;
     }
 
+    @Transactional(readOnly = true)
     public CommunityConfigResponse getConfig() {
         CommunityConfig config = communityConfigRepository.findById((short) 1)
                 .orElseThrow(() -> new NotFoundException("Configuración de la comunidad no encontrada"));
@@ -64,12 +65,14 @@ public class CommunityService {
                 config.getTags());
     }
 
+    @Transactional(readOnly = true)
     public List<EventResponse> listEvents(User viewer) {
         return communityEventRepository.findAllByOrderByDateAscTimeAsc().stream()
                 .map(event -> toEventResponse(event, viewer))
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public EventResponse getEvent(UUID eventId, User viewer) {
         CommunityEvent event = communityEventRepository.findById(eventId)
                 .orElseThrow(() -> new NotFoundException("Evento no encontrado"));
@@ -104,6 +107,7 @@ public class CommunityService {
         eventAttendeeRepository.deleteByEventIdAndUserId(eventId, me.getId());
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<NotificationResponse> listNotifications(User me, Pageable pageable) {
         Page<Notification> page = notificationRepository.findByRecipientIdOrderByCreatedAtDesc(me.getId(), pageable);
         return PageResponse.of(page, this::toNotificationResponse);
