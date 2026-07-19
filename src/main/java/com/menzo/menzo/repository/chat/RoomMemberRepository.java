@@ -1,6 +1,7 @@
 package com.menzo.menzo.repository.chat;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,6 +17,12 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, RoomMemb
     List<RoomMember> findByRoomId(UUID roomId);
 
     List<RoomMember> findByUserId(UUID userId);
+
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT m.userId FROM RoomMember m WHERE m.roomId = :roomId AND m.userId <> :excludeUserId")
+    Optional<UUID> findOtherMemberUserId(
+            @org.springframework.data.repository.query.Param("roomId") UUID roomId,
+            @org.springframework.data.repository.query.Param("excludeUserId") UUID excludeUserId);
 
     @org.springframework.data.jpa.repository.Query("""
             SELECT COUNT(rm) FROM RoomMember rm

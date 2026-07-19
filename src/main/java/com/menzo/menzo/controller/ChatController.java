@@ -46,6 +46,11 @@ public class ChatController {
         return chatService.getRoom(id, viewer);
     }
 
+    @PostMapping("/dm/{userId}")
+    public ChatRoomResponse openDirect(@PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        return chatService.openDirect(me, userId);
+    }
+
     @PostMapping("/{id}/join")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void join(@PathVariable UUID id, @AuthenticationPrincipal User me) {
@@ -72,8 +77,10 @@ public class ChatController {
 
     @GetMapping("/{id}/messages")
     public PageResponse<MessageResponse> messages(
-            @PathVariable UUID id, @PageableDefault(size = 40) Pageable pageable) {
-        return chatService.listMessages(id, pageable);
+            @PathVariable UUID id,
+            @PageableDefault(size = 40) Pageable pageable,
+            @AuthenticationPrincipal User viewer) {
+        return chatService.listMessages(id, pageable, viewer);
     }
 
     @PostMapping("/{id}/messages")
