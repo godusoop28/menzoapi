@@ -19,6 +19,12 @@ RUN mkdir -p /app/uploads && chown -R appuser:appuser /app
 USER appuser
 
 ENV UPLOADS_DIR=/app/uploads
+# Sin esto, la JVM en contenedores Linux minimalistas usa /dev/random para
+# SecureRandom (BCrypt, Tomcat session IDs, UUID.randomUUID) y se puede quedar
+# colgada indefinidamente esperando entropía, sin log ni excepción: eso es lo
+# que causaba que el arranque se congelara justo después del escaneo de
+# repositorios JPA y que el login/registro fallara de forma intermitente.
+ENV JAVA_TOOL_OPTIONS="-Djava.security.egd=file:/dev/./urandom"
 EXPOSE 8080
 
 ENTRYPOINT ["java", "-jar", "/app/app.war"]

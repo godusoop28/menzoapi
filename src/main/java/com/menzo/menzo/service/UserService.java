@@ -124,16 +124,10 @@ public class UserService {
         User me = userRepository.findById(principal.getId())
                 .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
 
-        String username = request.username().trim().toLowerCase(Locale.ROOT);
-        if (!username.equalsIgnoreCase(me.getUsername()) && userRepository.existsByUsernameIgnoreCase(username)) {
-            throw new ConflictException("Ese nombre de usuario ya está en uso");
-        }
-
         Aura aura = auraRepository.findById(request.aura())
                 .orElseThrow(() -> new BadRequestException("Aura desconocida: " + request.aura()));
 
         me.setDisplayName(request.displayName().trim());
-        me.setUsername(username);
         me.setAura(aura);
         me.setAvatarUri(request.avatarUri());
         me.setAvatarGradient(request.avatarGradient());
