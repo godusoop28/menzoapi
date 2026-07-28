@@ -50,6 +50,12 @@ public class ChatRoom {
     @Column(nullable = false, length = 10)
     private RoomType type = RoomType.PUBLIC;
 
+    @Column(name = "cover_uri", columnDefinition = "text")
+    private String coverUri;
+
+    @Column(name = "background_uri", columnDefinition = "text")
+    private String backgroundUri;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

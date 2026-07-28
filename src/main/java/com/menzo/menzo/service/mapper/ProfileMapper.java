@@ -30,6 +30,9 @@ public class ProfileMapper {
         boolean followedByMe = viewerId != null
                 && !viewerId.equals(user.getId())
                 && followRepository.existsByFollowerIdAndFollowingId(viewerId, user.getId());
+        boolean followsMe = viewerId != null
+                && !viewerId.equals(user.getId())
+                && followRepository.existsByFollowerIdAndFollowingId(user.getId(), viewerId);
 
         var interestIds = user.getInterests().stream().map(Interest::getId).sorted().toList();
         var badgeIds = user.getBadges().stream().map(UserBadge::getBadgeId).sorted().toList();
@@ -41,6 +44,8 @@ public class ProfileMapper {
                 user.getAvatarUri(),
                 user.getAvatarGradient(),
                 user.getCoverUri(),
+                user.getBackgroundUri(),
+                user.getBackgroundColor(),
                 user.getAura().getId(),
                 user.getBio(),
                 user.getStatusText(),
@@ -54,7 +59,8 @@ public class ProfileMapper {
                 visitors,
                 user.isOnline(),
                 badgeIds,
-                followedByMe);
+                followedByMe,
+                followsMe);
     }
 
     public UserSummary toSummary(User user) {

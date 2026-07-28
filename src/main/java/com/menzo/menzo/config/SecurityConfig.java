@@ -85,7 +85,7 @@ public class SecurityConfig {
                                 "/api/posts/*", "/api/posts/*/comments",
                                 "/api/chat/rooms", "/api/chat/rooms/*", "/api/chat/rooms/*/messages",
                                 "/api/users/*", "/api/users/*/followers", "/api/users/*/following",
-                                "/api/users/*/posts", "/api/users/*/wall")
+                                "/api/users/*/posts", "/api/users/*/wall", "/api/wall/*/comments")
                         .permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

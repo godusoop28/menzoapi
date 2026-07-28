@@ -3,11 +3,12 @@ package com.menzo.menzo.dto.user;
 import java.time.Instant;
 import java.util.UUID;
 
-public record WallMessageResponse(
+public record WallCommentResponse(
         UUID id,
-        UUID profileId,
+        UUID wallMessageId,
         UserSummary author,
         String body,
         Instant createdAt,
-        long commentCount) {
+        long likeCount,
+        boolean likedByMe) {
 }

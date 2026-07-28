@@ -11,6 +11,8 @@ public record UserProfileResponse(
         String avatarUri,
         String avatarGradient,
         String coverUri,
+        String backgroundUri,
+        String backgroundColor,
         String aura,
         String bio,
         String statusText,
@@ -24,5 +26,6 @@ public record UserProfileResponse(
         long visitors,
         boolean isOnline,
         List<String> badges,
-        boolean followedByMe) {
+        boolean followedByMe,
+        boolean followsMe) {
 }

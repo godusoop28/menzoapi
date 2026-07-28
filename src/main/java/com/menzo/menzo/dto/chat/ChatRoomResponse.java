@@ -14,11 +14,14 @@ public record ChatRoomResponse(
         String gradient,
         String icon,
         String type,
+        String coverUri,
+        String backgroundUri,
         UserSummary peer,
         long memberCount,
         long onlineCount,
         boolean favorite,
         boolean joined,
+        Instant createdAt,
         LastMessage lastMessage) {
 
     public record LastMessage(String body, boolean hasImage, String senderId, Instant createdAt) {

@@ -14,6 +14,8 @@ import com.menzo.menzo.domain.chat.ChatRoom;
 import com.menzo.menzo.domain.chat.Message;
 import com.menzo.menzo.domain.chat.MessageType;
 import com.menzo.menzo.domain.chat.RoomMember;
+import com.menzo.menzo.domain.chat.WallComment;
+import com.menzo.menzo.domain.chat.WallCommentLike;
 import com.menzo.menzo.domain.chat.WallMessage;
 import com.menzo.menzo.domain.community.Notification;
 import com.menzo.menzo.domain.community.NotificationCategory;
@@ -33,6 +35,8 @@ import com.menzo.menzo.dto.user.SettingsResponse;
 import com.menzo.menzo.dto.user.UpdateProfileRequest;
 import com.menzo.menzo.dto.user.UpdateSettingsRequest;
 import com.menzo.menzo.dto.user.UserProfileResponse;
+import com.menzo.menzo.dto.user.WallCommentRequest;
+import com.menzo.menzo.dto.user.WallCommentResponse;
 import com.menzo.menzo.dto.user.WallMessageRequest;
 import com.menzo.menzo.dto.user.WallMessageResponse;
 import com.menzo.menzo.exception.BadRequestException;
@@ -41,6 +45,8 @@ import com.menzo.menzo.exception.NotFoundException;
 import com.menzo.menzo.repository.chat.ChatRoomRepository;
 import com.menzo.menzo.repository.chat.MessageRepository;
 import com.menzo.menzo.repository.chat.RoomMemberRepository;
+import com.menzo.menzo.repository.chat.WallCommentLikeRepository;
+import com.menzo.menzo.repository.chat.WallCommentRepository;
 import com.menzo.menzo.repository.chat.WallMessageRepository;
 import com.menzo.menzo.repository.community.NotificationRepository;
 import com.menzo.menzo.repository.user.AuraRepository;
@@ -70,6 +76,8 @@ public class UserService {
     private final MessageRepository messageRepository;
     private final NotificationRepository notificationRepository;
     private final WallMessageRepository wallMessageRepository;
+    private final WallCommentRepository wallCommentRepository;
+    private final WallCommentLikeRepository wallCommentLikeRepository;
     private final ProfileMapper profileMapper;
 
     public UserService(
@@ -85,6 +93,8 @@ public class UserService {
             MessageRepository messageRepository,
             NotificationRepository notificationRepository,
             WallMessageRepository wallMessageRepository,
+            WallCommentRepository wallCommentRepository,
+            WallCommentLikeRepository wallCommentLikeRepository,
             ProfileMapper profileMapper) {
         this.userRepository = userRepository;
         this.auraRepository = auraRepository;
@@ -98,6 +108,8 @@ public class UserService {
         this.messageRepository = messageRepository;
         this.notificationRepository = notificationRepository;
         this.wallMessageRepository = wallMessageRepository;
+        this.wallCommentRepository = wallCommentRepository;
+        this.wallCommentLikeRepository = wallCommentLikeRepository;
         this.profileMapper = profileMapper;
     }
 
@@ -199,6 +211,12 @@ public class UserService {
         }
         if (request.coverUri() != null) {
             me.setCoverUri(request.coverUri());
+        }
+        if (request.backgroundUri() != null) {
+            me.setBackgroundUri(request.backgroundUri().isBlank() ? null : request.backgroundUri());
+        }
+        if (request.backgroundColor() != null) {
+            me.setBackgroundColor(request.backgroundColor().isBlank() ? null : request.backgroundColor());
         }
         if (request.aura() != null) {
             Aura aura = auraRepository.findById(request.aura())
@@ -371,6 +389,58 @@ public class UserService {
                 message.getProfile().getId(),
                 profileMapper.toSummary(message.getAuthor()),
                 message.getBody(),
-                message.getCreatedAt());
+                message.getCreatedAt(),
+                wallCommentRepository.countByWallMessageId(message.getId()));
+    }
+
+    @Transactional
+    public WallCommentResponse addWallComment(User me, UUID wallMessageId, WallCommentRequest request) {
+        WallMessage wallMessage = wallMessageRepository.findById(wallMessageId)
+                .orElseThrow(() -> new NotFoundException("Mensaje de muro no encontrado"));
+
+        WallComment comment = new WallComment();
+        comment.setWallMessage(wallMessage);
+        comment.setAuthor(me);
+        comment.setBody(request.body());
+        comment = wallCommentRepository.save(comment);
+
+        return toWallCommentResponse(comment, me.getId());
+    }
+
+    @Transactional(readOnly = true)
+    public List<WallCommentResponse> listWallComments(UUID wallMessageId, User viewer) {
+        UUID viewerId = viewer != null ? viewer.getId() : null;
+        return wallCommentRepository.findByWallMessageIdOrderByCreatedAtAsc(wallMessageId).stream()
+                .map(comment -> toWallCommentResponse(comment, viewerId))
+                .toList();
+    }
+
+    @Transactional
+    public void likeWallComment(User me, UUID commentId) {
+        if (!wallCommentRepository.existsById(commentId)) {
+            throw new NotFoundException("Comentario no encontrado");
+        }
+        if (!wallCommentLikeRepository.existsByCommentIdAndUserId(commentId, me.getId())) {
+            wallCommentLikeRepository.save(new WallCommentLike(commentId, me.getId()));
+        }
+    }
+
+    @Transactional
+    public void unlikeWallComment(User me, UUID commentId) {
+        wallCommentLikeRepository.deleteByCommentIdAndUserId(commentId, me.getId());
+    }
+
+    private WallCommentResponse toWallCommentResponse(WallComment comment, UUID viewerId) {
+        long likeCount = wallCommentLikeRepository.countByCommentId(comment.getId());
+        boolean likedByMe = viewerId != null
+                && wallCommentLikeRepository.existsByCommentIdAndUserId(comment.getId(), viewerId);
+        return new WallCommentResponse(
+                comment.getId(),
+                comment.getWallMessage().getId(),
+                profileMapper.toSummary(comment.getAuthor()),
+                comment.getBody(),
+                comment.getCreatedAt(),
+                likeCount,
+                likedByMe);
     }
 }

@@ -59,6 +59,12 @@ public class User {
     @Column(name = "cover_uri", columnDefinition = "text")
     private String coverUri;
 
+    @Column(name = "background_uri", columnDefinition = "text")
+    private String backgroundUri;
+
+    @Column(name = "background_color", length = 20)
+    private String backgroundColor;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "aura_id", nullable = false)
     private Aura aura;

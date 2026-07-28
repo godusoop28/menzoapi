@@ -1,8 +1,10 @@
 package com.menzo.menzo.service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -20,6 +22,7 @@ import com.menzo.menzo.dto.chat.ChatRoomResponse;
 import com.menzo.menzo.dto.chat.CreateRoomRequest;
 import com.menzo.menzo.dto.chat.MessageResponse;
 import com.menzo.menzo.dto.chat.SendMessageRequest;
+import com.menzo.menzo.dto.chat.UpdateRoomRequest;
 import com.menzo.menzo.dto.common.PageResponse;
 import com.menzo.menzo.dto.user.UserSummary;
 import com.menzo.menzo.exception.BadRequestException;
@@ -57,15 +60,34 @@ public class ChatService {
         this.profileMapper = profileMapper;
     }
 
+    /** Solo las salas a las que el usuario ya se unió (públicas o directas) — "Mis chats". */
     @Transactional(readOnly = true)
     public List<ChatRoomResponse> listRooms(User viewer) {
-        List<ChatRoom> rooms = new ArrayList<>(chatRoomRepository.findByType(RoomType.PUBLIC));
-        if (viewer != null) {
-            rooms.addAll(chatRoomRepository.findDirectRoomsForUser(viewer.getId()));
+        if (viewer == null) {
+            return List.of();
         }
+        List<ChatRoom> rooms = new ArrayList<>(chatRoomRepository.findByType(RoomType.PUBLIC).stream()
+                .filter(room -> roomMemberRepository.existsByRoomIdAndUserId(room.getId(), viewer.getId()))
+                .toList());
+        rooms.addAll(chatRoomRepository.findDirectRoomsForUser(viewer.getId()));
         return rooms.stream()
                 .map(room -> toRoomResponse(room, viewer))
                 .toList();
+    }
+
+    /** Todas las salas públicas, unidas o no — para descubrir/explorar. */
+    @Transactional(readOnly = true)
+    public List<ChatRoomResponse> listDiscoverRooms(String sort, User viewer) {
+        List<ChatRoomResponse> rooms = chatRoomRepository.findByType(RoomType.PUBLIC).stream()
+                .map(room -> toRoomResponse(room, viewer))
+                .collect(Collectors.toCollection(ArrayList::new));
+        Comparator<ChatRoomResponse> comparator = "popular".equalsIgnoreCase(sort)
+                ? Comparator.comparingLong(ChatRoomResponse::onlineCount)
+                        .thenComparingLong(ChatRoomResponse::memberCount)
+                        .reversed()
+                : Comparator.comparing(ChatRoomResponse::createdAt).reversed();
+        rooms.sort(comparator);
+        return rooms;
     }
 
     @Transactional(readOnly = true)
@@ -104,6 +126,26 @@ public class ChatService {
         if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
             roomMemberRepository.save(new RoomMember(roomId, me.getId()));
         }
+    }
+
+    /** Cualquier miembro (de una sala pública o de una conversación directa) puede fijar
+     * portada/fondo — no solo quien la creó. Un valor vacío ("") limpia el campo; null lo deja
+     * sin cambios (mismo patrón de PATCH parcial que el resto de la API). */
+    @Transactional
+    public ChatRoomResponse updateRoom(User me, UUID roomId, UpdateRoomRequest request) {
+        ChatRoom room = chatRoomRepository.findById(roomId)
+                .orElseThrow(() -> new NotFoundException("Sala no encontrada"));
+        if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
+            throw new ForbiddenException("No tienes acceso a esta conversación");
+        }
+        if (request.coverUri() != null) {
+            room.setCoverUri(request.coverUri().isBlank() ? null : request.coverUri());
+        }
+        if (request.backgroundUri() != null) {
+            room.setBackgroundUri(request.backgroundUri().isBlank() ? null : request.backgroundUri());
+        }
+        room = chatRoomRepository.save(room);
+        return toRoomResponse(room, me);
     }
 
     @Transactional
@@ -221,11 +263,14 @@ public class ChatService {
                 room.getGradient(),
                 room.getIcon(),
                 room.getType().name(),
+                room.getCoverUri(),
+                room.getBackgroundUri(),
                 peer,
                 memberCount,
                 onlineCount,
                 favorite,
                 joined,
+                room.getCreatedAt(),
                 lastMessage);
     }
 

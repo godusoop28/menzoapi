@@ -10,6 +10,8 @@ public record UpdateProfileRequest(
         String avatarUri,
         String avatarGradient,
         String coverUri,
+        String backgroundUri,
+        String backgroundColor,
         String aura,
         @Size(max = 280) String bio,
         @Size(max = 140) String statusText,

@@ -30,6 +30,8 @@ import com.menzo.menzo.dto.user.SettingsResponse;
 import com.menzo.menzo.dto.user.UpdateProfileRequest;
 import com.menzo.menzo.dto.user.UpdateSettingsRequest;
 import com.menzo.menzo.dto.user.UserProfileResponse;
+import com.menzo.menzo.dto.user.WallCommentRequest;
+import com.menzo.menzo.dto.user.WallCommentResponse;
 import com.menzo.menzo.dto.user.WallMessageRequest;
 import com.menzo.menzo.dto.user.WallMessageResponse;
 import com.menzo.menzo.service.UserService;
@@ -126,6 +128,31 @@ public class UserController {
     public WallMessageResponse addWallMessage(
             @PathVariable UUID id, @AuthenticationPrincipal User me, @Valid @RequestBody WallMessageRequest request) {
         return userService.addWallMessage(me, id, request);
+    }
+
+    @GetMapping("/wall/{messageId}/comments")
+    public List<WallCommentResponse> wallComments(
+            @PathVariable UUID messageId, @AuthenticationPrincipal User viewer) {
+        return userService.listWallComments(messageId, viewer);
+    }
+
+    @PostMapping("/wall/{messageId}/comments")
+    @ResponseStatus(HttpStatus.CREATED)
+    public WallCommentResponse addWallComment(
+            @PathVariable UUID messageId, @AuthenticationPrincipal User me, @Valid @RequestBody WallCommentRequest request) {
+        return userService.addWallComment(me, messageId, request);
+    }
+
+    @PutMapping("/wall/comments/{commentId}/like")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void likeWallComment(@PathVariable UUID commentId, @AuthenticationPrincipal User me) {
+        userService.likeWallComment(me, commentId);
+    }
+
+    @DeleteMapping("/wall/comments/{commentId}/like")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unlikeWallComment(@PathVariable UUID commentId, @AuthenticationPrincipal User me) {
+        userService.unlikeWallComment(me, commentId);
     }
 
     @GetMapping("/lookups/auras")
