@@ -18,8 +18,6 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.menzo.menzo.exception.ErrorResponse;
 import com.menzo.menzo.repository.user.UserRepository;
 import com.menzo.menzo.security.JwtAuthenticationFilter;
 import com.menzo.menzo.security.JwtService;
@@ -46,15 +44,19 @@ public class SecurityConfig {
      * clientes (web/móvil) solo intentan renovar el access token cuando ven un 401, así que con
      * el 403 nunca se disparaba el refresh silencioso y la sesión se cerraba de golpe aunque el
      * refresh token siguiera siendo válido.
+     *
+     * Arma el JSON a mano (sin ObjectMapper inyectado) para no depender de que Jackson esté
+     * registrado como bean en este punto del arranque del contexto de seguridad.
      */
     @Bean
-    public AuthenticationEntryPoint authenticationEntryPoint(ObjectMapper objectMapper) {
+    public AuthenticationEntryPoint authenticationEntryPoint() {
         return (request, response, authException) -> {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-            ErrorResponse body = ErrorResponse.of(
-                    HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized", "No autenticado", request.getRequestURI());
-            objectMapper.writeValue(response.getWriter(), body);
+            response.setCharacterEncoding("UTF-8");
+            String path = request.getRequestURI().replace("\"", "\\\"");
+            response.getWriter().write(
+                    "{\"status\":401,\"error\":\"Unauthorized\",\"message\":\"No autenticado\",\"path\":\"" + path + "\"}");
         };
     }
 
