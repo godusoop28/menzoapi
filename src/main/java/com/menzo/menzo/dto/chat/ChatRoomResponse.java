@@ -1,5 +1,6 @@
 package com.menzo.menzo.dto.chat;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import com.menzo.menzo.dto.user.UserSummary;
@@ -17,5 +18,9 @@ public record ChatRoomResponse(
         long memberCount,
         long onlineCount,
         boolean favorite,
-        boolean joined) {
+        boolean joined,
+        LastMessage lastMessage) {
+
+    public record LastMessage(String body, boolean hasImage, String senderId, Instant createdAt) {
+    }
 }

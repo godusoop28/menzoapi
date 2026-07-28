@@ -50,6 +50,9 @@ menzo:
     dir: ${UPLOADS_DIR:./uploads}
     # RENDER_EXTERNAL_URL la inyecta Render automáticamente en cada web service (https://<servicio>.onrender.com).
     public-base-url: ${UPLOADS_PUBLIC_BASE_URL:${RENDER_EXTERNAL_URL:http://localhost:8080}/files}
+  cloudinary:
+    # Formato: cloudinary://<api_key>:<api_secret>@<cloud_name> (se configura en Render como secreto).
+    url: ${CLOUDINARY_URL:}
 
 springdoc:
   swagger-ui:

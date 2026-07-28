@@ -49,6 +49,12 @@ services:
         value: /app/uploads
       # No hace falta declarar UPLOADS_PUBLIC_BASE_URL: Render inyecta RENDER_EXTERNAL_URL
       # solo y application.yml ya arma la URL pública de /files con eso.
+      # Almacenamiento de imágenes (avatar/portada/publicaciones/chat): sin esta variable,
+      # los archivos subidos no sobreviven a un redeploy. Configúrala manualmente en el
+      # dashboard de Render (Environment) con el valor cloudinary://<api_key>:<api_secret>@<cloud_name>
+      # de tu cuenta de Cloudinary — no se sincroniza desde este archivo.
+      - key: CLOUDINARY_URL
+        sync: false
       - key: LOG_LEVEL
         value: INFO
       # Dejar en "dev" siembra 3 usuarios/posts/sala de ejemplo para poder probar la app

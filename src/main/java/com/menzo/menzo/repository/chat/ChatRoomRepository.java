@@ -24,4 +24,11 @@ public interface ChatRoomRepository extends JpaRepository<ChatRoom, UUID> {
               AND EXISTS (SELECT 1 FROM RoomMember m2 WHERE m2.roomId = r.id AND m2.userId = :userB)
             """)
     Optional<ChatRoom> findDirectRoomBetween(@Param("userA") UUID userA, @Param("userB") UUID userB);
+
+    @Query("""
+            SELECT r FROM ChatRoom r
+            WHERE r.type = com.menzo.menzo.domain.chat.RoomType.DIRECT
+              AND EXISTS (SELECT 1 FROM RoomMember m WHERE m.roomId = r.id AND m.userId = :userId)
+            """)
+    List<ChatRoom> findDirectRoomsForUser(@Param("userId") UUID userId);
 }

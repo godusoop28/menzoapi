@@ -1,5 +1,6 @@
 package com.menzo.menzo.service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -58,7 +59,11 @@ public class ChatService {
 
     @Transactional(readOnly = true)
     public List<ChatRoomResponse> listRooms(User viewer) {
-        return chatRoomRepository.findByType(RoomType.PUBLIC).stream()
+        List<ChatRoom> rooms = new ArrayList<>(chatRoomRepository.findByType(RoomType.PUBLIC));
+        if (viewer != null) {
+            rooms.addAll(chatRoomRepository.findDirectRoomsForUser(viewer.getId()));
+        }
+        return rooms.stream()
                 .map(room -> toRoomResponse(room, viewer))
                 .toList();
     }
@@ -203,6 +208,10 @@ public class ChatService {
                     .orElse(null);
         }
 
+        ChatRoomResponse.LastMessage lastMessage = messageRepository.findFirstByRoomIdOrderByCreatedAtDesc(room.getId())
+                .map(this::toLastMessage)
+                .orElse(null);
+
         return new ChatRoomResponse(
                 room.getId(),
                 room.getSlug(),
@@ -216,7 +225,17 @@ public class ChatService {
                 memberCount,
                 onlineCount,
                 favorite,
-                joined);
+                joined,
+                lastMessage);
+    }
+
+    private ChatRoomResponse.LastMessage toLastMessage(Message message) {
+        boolean isSystem = message.getType() == MessageType.system || message.getAuthor() == null;
+        return new ChatRoomResponse.LastMessage(
+                message.getBody(),
+                message.getImageUri() != null && !message.getImageUri().isBlank(),
+                isSystem ? "system" : message.getAuthor().getId().toString(),
+                message.getCreatedAt());
     }
 
     private MessageResponse toMessageResponse(Message message) {
