@@ -5,20 +5,26 @@ import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.menzo.menzo.exception.ErrorResponse;
 import com.menzo.menzo.repository.user.UserRepository;
 import com.menzo.menzo.security.JwtAuthenticationFilter;
 import com.menzo.menzo.security.JwtService;
+
+import jakarta.servlet.http.HttpServletResponse;
 
 @Configuration
 @EnableWebSecurity
@@ -34,13 +40,33 @@ public class SecurityConfig {
         return new JwtAuthenticationFilter(jwtService, userRepository);
     }
 
+    /**
+     * Sin esto, Spring Security cae en su entry point por defecto (Http403ForbiddenEntryPoint)
+     * para CUALQUIER pedido sin token/con token vencido, devolviendo 403 en vez de 401. Los
+     * clientes (web/móvil) solo intentan renovar el access token cuando ven un 401, así que con
+     * el 403 nunca se disparaba el refresh silencioso y la sesión se cerraba de golpe aunque el
+     * refresh token siguiera siendo válido.
+     */
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthenticationFilter jwtAuthenticationFilter)
+    public AuthenticationEntryPoint authenticationEntryPoint(ObjectMapper objectMapper) {
+        return (request, response, authException) -> {
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            ErrorResponse body = ErrorResponse.of(
+                    HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized", "No autenticado", request.getRequestURI());
+            objectMapper.writeValue(response.getWriter(), body);
+        };
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http, JwtAuthenticationFilter jwtAuthenticationFilter, AuthenticationEntryPoint authenticationEntryPoint)
             throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> {})
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(authenticationEntryPoint))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/files/**").permitAll()
