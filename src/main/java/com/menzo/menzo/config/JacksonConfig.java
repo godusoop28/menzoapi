@@ -1,0 +1,40 @@
+package com.menzo.menzo.config;
+
+import java.io.IOException;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+
+/**
+ * Instant.now() puede traer precisión de nanosegundos (según el reloj del SO), y el
+ * serializador JSR-310 por defecto escribe todos esos dígitos fraccionarios sin truncar.
+ * Hermes (el motor JS de React Native) no parsea de forma confiable ISO 8601 con más de 3
+ * decimales — Date.parse devuelve Invalid Date, lo que rompía el orden de los mensajes de
+ * chat (NaN se trata como "igual" en Array.sort). Se trunca a milisegundos acá para que
+ * todo timestamp que sale de la API sea válido en cualquier motor JS. Spring Boot registra
+ * automáticamente cualquier bean de tipo com.fasterxml.jackson.databind.Module en el
+ * ObjectMapper autoconfigurado, sin depender de paquetes específicos de cada versión.
+ */
+@Configuration
+public class JacksonConfig {
+
+    @Bean
+    public SimpleModule instantMillisModule() {
+        SimpleModule module = new SimpleModule("InstantMillis");
+        module.addSerializer(Instant.class, new JsonSerializer<Instant>() {
+            @Override
+            public void serialize(Instant value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+                gen.writeString(DateTimeFormatter.ISO_INSTANT.format(value.truncatedTo(ChronoUnit.MILLIS)));
+            }
+        });
+        return module;
+    }
+}

@@ -11,7 +11,7 @@ import com.menzo.menzo.domain.chat.Message;
 
 public interface MessageRepository extends JpaRepository<Message, UUID> {
 
-    Page<Message> findByRoomIdOrderByCreatedAtDesc(UUID roomId, Pageable pageable);
+    Page<Message> findByRoomIdOrderByCreatedAtDescIdDesc(UUID roomId, Pageable pageable);
 
     Optional<Message> findFirstByRoomIdOrderByCreatedAtDesc(UUID roomId);
 }

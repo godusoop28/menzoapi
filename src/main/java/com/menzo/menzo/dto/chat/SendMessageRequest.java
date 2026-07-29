@@ -1,7 +1,12 @@
 package com.menzo.menzo.dto.chat;
 
-import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Size;
 
-public record SendMessageRequest(@NotBlank @Size(max = 2000) String body, String imageUri) {
+public record SendMessageRequest(@Size(max = 2000) String body, String imageUri) {
+
+    @AssertTrue(message = "El mensaje necesita texto o una imagen")
+    public boolean isBodyOrImagePresent() {
+        return (body != null && !body.isBlank()) || (imageUri != null && !imageUri.isBlank());
+    }
 }

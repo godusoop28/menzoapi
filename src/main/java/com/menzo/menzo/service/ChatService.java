@@ -211,7 +211,7 @@ public class ChatService {
         message.setRoom(room);
         message.setAuthor(me);
         message.setType(MessageType.text);
-        message.setBody(request.body());
+        message.setBody(request.body() == null ? "" : request.body());
         message.setImageUri(request.imageUri());
         message = messageRepository.save(message);
 
@@ -223,7 +223,7 @@ public class ChatService {
         ChatRoom room = chatRoomRepository.findById(roomId)
                 .orElseThrow(() -> new NotFoundException("Sala no encontrada"));
         requireCanAccess(room, viewer);
-        Page<Message> page = messageRepository.findByRoomIdOrderByCreatedAtDesc(roomId, pageable);
+        Page<Message> page = messageRepository.findByRoomIdOrderByCreatedAtDescIdDesc(roomId, pageable);
         return PageResponse.of(page, this::toMessageResponse);
     }
 
