@@ -9,8 +9,6 @@ import org.hibernate.annotations.CreationTimestamp;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
@@ -19,12 +17,12 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "room_members")
-@IdClass(RoomMember.RoomMemberId.class)
+@Table(name = "room_bans")
+@IdClass(RoomBan.RoomBanId.class)
 @Getter
 @Setter
 @NoArgsConstructor
-public class RoomMember {
+public class RoomBan {
 
     @Id
     @Column(name = "room_id")
@@ -34,33 +32,31 @@ public class RoomMember {
     @Column(name = "user_id")
     private UUID userId;
 
+    @Column(name = "banned_by_user_id")
+    private UUID bannedByUserId;
+
+    @Column(name = "reason")
+    private String reason;
+
     @CreationTimestamp
-    @Column(name = "joined_at", nullable = false, updatable = false)
-    private Instant joinedAt;
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "role", nullable = false)
-    private RoomRole role = RoomRole.MEMBER;
-
-    public RoomMember(UUID roomId, UUID userId) {
+    public RoomBan(UUID roomId, UUID userId, UUID bannedByUserId, String reason) {
         this.roomId = roomId;
         this.userId = userId;
-    }
-
-    public RoomMember(UUID roomId, UUID userId, RoomRole role) {
-        this.roomId = roomId;
-        this.userId = userId;
-        this.role = role;
+        this.bannedByUserId = bannedByUserId;
+        this.reason = reason;
     }
 
     @Getter
     @Setter
     @NoArgsConstructor
-    public static class RoomMemberId implements Serializable {
+    public static class RoomBanId implements Serializable {
         private UUID roomId;
         private UUID userId;
 
-        public RoomMemberId(UUID roomId, UUID userId) {
+        public RoomBanId(UUID roomId, UUID userId) {
             this.roomId = roomId;
             this.userId = userId;
         }
@@ -68,7 +64,7 @@ public class RoomMember {
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
-            if (!(o instanceof RoomMemberId that)) return false;
+            if (!(o instanceof RoomBanId that)) return false;
             return Objects.equals(roomId, that.roomId) && Objects.equals(userId, that.userId);
         }
 

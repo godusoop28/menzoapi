@@ -21,6 +21,8 @@ public record ChatRoomResponse(
         long onlineCount,
         boolean favorite,
         boolean joined,
+        String role,
+        boolean live,
         Instant createdAt,
         LastMessage lastMessage) {
 

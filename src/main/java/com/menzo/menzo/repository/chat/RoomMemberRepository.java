@@ -18,6 +18,8 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, RoomMemb
 
     List<RoomMember> findByUserId(UUID userId);
 
+    Optional<RoomMember> findByRoomIdAndUserId(UUID roomId, UUID userId);
+
     @org.springframework.data.jpa.repository.Query(
             "SELECT m.userId FROM RoomMember m WHERE m.roomId = :roomId AND m.userId <> :excludeUserId")
     Optional<UUID> findOtherMemberUserId(

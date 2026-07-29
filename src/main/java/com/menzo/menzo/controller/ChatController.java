@@ -20,9 +20,12 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.menzo.menzo.domain.user.User;
+import com.menzo.menzo.dto.chat.BanResponse;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
 import com.menzo.menzo.dto.chat.CreateRoomRequest;
 import com.menzo.menzo.dto.chat.MessageResponse;
+import com.menzo.menzo.dto.chat.ModerationActionRequest;
+import com.menzo.menzo.dto.chat.RoomMemberResponse;
 import com.menzo.menzo.dto.chat.SendMessageRequest;
 import com.menzo.menzo.dto.chat.UpdateRoomRequest;
 import com.menzo.menzo.dto.common.PageResponse;
@@ -110,5 +113,55 @@ public class ChatController {
     public MessageResponse sendMessage(
             @PathVariable UUID id, @AuthenticationPrincipal User me, @Valid @RequestBody SendMessageRequest request) {
         return chatService.sendMessage(me, id, request);
+    }
+
+    @GetMapping("/{id}/members")
+    public List<RoomMemberResponse> members(@PathVariable UUID id) {
+        return chatService.listMembers(id);
+    }
+
+    @PostMapping("/{id}/members/{userId}/promote")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void promote(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        chatService.promote(me, id, userId);
+    }
+
+    @PostMapping("/{id}/members/{userId}/demote")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void demote(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        chatService.demote(me, id, userId);
+    }
+
+    @DeleteMapping("/{id}/members/{userId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void kick(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        chatService.kick(me, id, userId);
+    }
+
+    @PostMapping("/{id}/members/{userId}/ban")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void ban(
+            @PathVariable UUID id,
+            @PathVariable UUID userId,
+            @AuthenticationPrincipal User me,
+            @RequestBody(required = false) ModerationActionRequest request) {
+        chatService.ban(me, id, userId, request);
+    }
+
+    @DeleteMapping("/{id}/bans/{userId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unban(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        chatService.unban(me, id, userId);
+    }
+
+    @GetMapping("/{id}/bans")
+    public List<BanResponse> bans(@PathVariable UUID id, @AuthenticationPrincipal User me) {
+        return chatService.listBans(me, id);
+    }
+
+    @PostMapping("/{id}/members/{userId}/invite")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void invite(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        chatService.inviteMember(me, id, userId);
     }
 }

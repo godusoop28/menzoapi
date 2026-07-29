@@ -15,22 +15,30 @@ import org.springframework.transaction.annotation.Transactional;
 import com.menzo.menzo.domain.chat.ChatRoom;
 import com.menzo.menzo.domain.chat.Message;
 import com.menzo.menzo.domain.chat.MessageType;
+import com.menzo.menzo.domain.chat.RoomBan;
 import com.menzo.menzo.domain.chat.RoomFavorite;
 import com.menzo.menzo.domain.chat.RoomMember;
+import com.menzo.menzo.domain.chat.RoomRole;
 import com.menzo.menzo.domain.chat.RoomType;
 import com.menzo.menzo.domain.user.User;
+import com.menzo.menzo.dto.chat.BanResponse;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
 import com.menzo.menzo.dto.chat.CreateRoomRequest;
 import com.menzo.menzo.dto.chat.MessageResponse;
+import com.menzo.menzo.dto.chat.ModerationActionRequest;
+import com.menzo.menzo.dto.chat.RoomMemberResponse;
+import com.menzo.menzo.dto.chat.RoomModerationEvent;
 import com.menzo.menzo.dto.chat.SendMessageRequest;
 import com.menzo.menzo.dto.chat.UpdateRoomRequest;
 import com.menzo.menzo.dto.common.PageResponse;
 import com.menzo.menzo.dto.user.UserSummary;
 import com.menzo.menzo.exception.BadRequestException;
+import com.menzo.menzo.exception.ConflictException;
 import com.menzo.menzo.exception.ForbiddenException;
 import com.menzo.menzo.exception.NotFoundException;
 import com.menzo.menzo.repository.chat.ChatRoomRepository;
 import com.menzo.menzo.repository.chat.MessageRepository;
+import com.menzo.menzo.repository.chat.RoomBanRepository;
 import com.menzo.menzo.repository.chat.RoomFavoriteRepository;
 import com.menzo.menzo.repository.chat.RoomMemberRepository;
 import com.menzo.menzo.repository.user.UserRepository;
@@ -42,26 +50,32 @@ public class ChatService {
     private final ChatRoomRepository chatRoomRepository;
     private final RoomMemberRepository roomMemberRepository;
     private final RoomFavoriteRepository roomFavoriteRepository;
+    private final RoomBanRepository roomBanRepository;
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final ProfileMapper profileMapper;
     private final SimpMessagingTemplate messagingTemplate;
+    private final VoiceService voiceService;
 
     public ChatService(
             ChatRoomRepository chatRoomRepository,
             RoomMemberRepository roomMemberRepository,
             RoomFavoriteRepository roomFavoriteRepository,
+            RoomBanRepository roomBanRepository,
             MessageRepository messageRepository,
             UserRepository userRepository,
             ProfileMapper profileMapper,
-            SimpMessagingTemplate messagingTemplate) {
+            SimpMessagingTemplate messagingTemplate,
+            VoiceService voiceService) {
         this.chatRoomRepository = chatRoomRepository;
         this.roomMemberRepository = roomMemberRepository;
         this.roomFavoriteRepository = roomFavoriteRepository;
+        this.roomBanRepository = roomBanRepository;
         this.messageRepository = messageRepository;
         this.userRepository = userRepository;
         this.profileMapper = profileMapper;
         this.messagingTemplate = messagingTemplate;
+        this.voiceService = voiceService;
     }
 
     /** Solo las salas a las que el usuario ya se unió (públicas o directas) — "Mis chats". */
@@ -116,7 +130,7 @@ public class ChatService {
             room.setIcon(request.icon());
         }
         room = chatRoomRepository.save(room);
-        roomMemberRepository.save(new RoomMember(room.getId(), me.getId()));
+        roomMemberRepository.save(new RoomMember(room.getId(), me.getId(), RoomRole.OWNER));
         return toRoomResponse(room, me);
     }
 
@@ -126,6 +140,9 @@ public class ChatService {
                 .orElseThrow(() -> new NotFoundException("Sala no encontrada"));
         if (room.getType() != RoomType.PUBLIC) {
             throw new BadRequestException("No puedes unirte a una conversación privada");
+        }
+        if (roomBanRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
+            throw new ForbiddenException("Estás baneado de esta sala");
         }
         if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
             roomMemberRepository.save(new RoomMember(roomId, me.getId()));
@@ -231,6 +248,9 @@ public class ChatService {
         if (room.getType() == RoomType.DIRECT) {
             requireCanAccess(room, me);
         } else if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
+            if (roomBanRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
+                throw new ForbiddenException("Estás baneado de esta sala");
+            }
             roomMemberRepository.save(new RoomMember(roomId, me.getId()));
             announceJoin(room, me);
         }
@@ -257,6 +277,186 @@ public class ChatService {
         return PageResponse.of(page, this::toMessageResponse);
     }
 
+    @Transactional(readOnly = true)
+    public List<RoomMemberResponse> listMembers(UUID roomId) {
+        getRoomOrThrow(roomId);
+        List<RoomMember> members = new ArrayList<>(roomMemberRepository.findByRoomId(roomId));
+        members.sort(Comparator.<RoomMember>comparingInt(m -> m.getRole().ordinal()).thenComparing(RoomMember::getJoinedAt));
+        List<RoomMemberResponse> result = new ArrayList<>();
+        for (RoomMember member : members) {
+            userRepository.findById(member.getUserId()).ifPresent(user ->
+                    result.add(new RoomMemberResponse(profileMapper.toSummary(user), member.getRole().name(), member.getJoinedAt())));
+        }
+        return result;
+    }
+
+    @Transactional
+    public void promote(User actor, UUID roomId, UUID targetUserId) {
+        ChatRoom room = getRoomOrThrow(roomId);
+        requireOwner(roomId, actor);
+        if (targetUserId.equals(actor.getId())) {
+            throw new BadRequestException("No puedes cambiar tu propio rol");
+        }
+        RoomMember target = roomMemberRepository.findByRoomIdAndUserId(roomId, targetUserId)
+                .orElseThrow(() -> new NotFoundException("Ese usuario no es miembro de la sala"));
+        if (target.getRole() == RoomRole.CO_HOST) {
+            throw new ConflictException("Ese usuario ya es coanfitrión");
+        }
+        target.setRole(RoomRole.CO_HOST);
+        roomMemberRepository.save(target);
+        User targetUser = requireUser(targetUserId);
+        announceModeration(room, "ROLE_CHANGED", actor, targetUser, RoomRole.CO_HOST,
+                targetUser.getDisplayName() + " ahora es coanfitrión de la sala.");
+    }
+
+    @Transactional
+    public void demote(User actor, UUID roomId, UUID targetUserId) {
+        ChatRoom room = getRoomOrThrow(roomId);
+        requireOwner(roomId, actor);
+        RoomMember target = roomMemberRepository.findByRoomIdAndUserId(roomId, targetUserId)
+                .orElseThrow(() -> new NotFoundException("Ese usuario no es miembro de la sala"));
+        if (target.getRole() != RoomRole.CO_HOST) {
+            throw new BadRequestException("Ese usuario no es coanfitrión");
+        }
+        target.setRole(RoomRole.MEMBER);
+        roomMemberRepository.save(target);
+        User targetUser = requireUser(targetUserId);
+        announceModeration(room, "ROLE_CHANGED", actor, targetUser, RoomRole.MEMBER,
+                targetUser.getDisplayName() + " dejó de ser coanfitrión.");
+    }
+
+    @Transactional
+    public void kick(User actor, UUID roomId, UUID targetUserId) {
+        ChatRoom room = getRoomOrThrow(roomId);
+        RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
+        RoomMember target = roomMemberRepository.findByRoomIdAndUserId(roomId, targetUserId)
+                .orElseThrow(() -> new NotFoundException("Ese usuario no es miembro de la sala"));
+        requireCanModerate(actorRole, target, actor);
+        roomMemberRepository.delete(target);
+        User targetUser = requireUser(targetUserId);
+        announceModeration(room, "KICKED", actor, targetUser, null,
+                "Se expulsó a " + targetUser.getDisplayName() + " de la sala.");
+    }
+
+    @Transactional
+    public void ban(User actor, UUID roomId, UUID targetUserId, ModerationActionRequest request) {
+        ChatRoom room = getRoomOrThrow(roomId);
+        RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
+        RoomMember target = roomMemberRepository.findByRoomIdAndUserId(roomId, targetUserId)
+                .orElseThrow(() -> new NotFoundException("Ese usuario no es miembro de la sala"));
+        requireCanModerate(actorRole, target, actor);
+        roomMemberRepository.delete(target);
+        String reason = request != null ? request.reason() : null;
+        roomBanRepository.save(new RoomBan(roomId, targetUserId, actor.getId(), reason));
+        User targetUser = requireUser(targetUserId);
+        announceModeration(room, "BANNED", actor, targetUser, null,
+                "Se baneó a " + targetUser.getDisplayName() + " de la sala.");
+    }
+
+    @Transactional
+    public void unban(User actor, UUID roomId, UUID targetUserId) {
+        getRoomOrThrow(roomId);
+        requireOwnerOrCoHost(roomId, actor);
+        if (!roomBanRepository.existsByRoomIdAndUserId(roomId, targetUserId)) {
+            throw new NotFoundException("Ese usuario no está baneado");
+        }
+        roomBanRepository.deleteByRoomIdAndUserId(roomId, targetUserId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<BanResponse> listBans(User actor, UUID roomId) {
+        getRoomOrThrow(roomId);
+        requireOwnerOrCoHost(roomId, actor);
+        List<BanResponse> result = new ArrayList<>();
+        for (RoomBan ban : roomBanRepository.findByRoomId(roomId)) {
+            User user = userRepository.findById(ban.getUserId()).orElse(null);
+            if (user == null) {
+                continue;
+            }
+            UserSummary bannedBy = ban.getBannedByUserId() != null
+                    ? userRepository.findById(ban.getBannedByUserId()).map(profileMapper::toSummary).orElse(null)
+                    : null;
+            result.add(new BanResponse(profileMapper.toSummary(user), ban.getReason(), ban.getCreatedAt(), bannedBy));
+        }
+        return result;
+    }
+
+    @Transactional
+    public void inviteMember(User actor, UUID roomId, UUID targetUserId) {
+        ChatRoom room = getRoomOrThrow(roomId);
+        requireOwnerOrCoHost(roomId, actor);
+        User targetUser = requireUser(targetUserId);
+        if (roomBanRepository.existsByRoomIdAndUserId(roomId, targetUserId)) {
+            throw new ForbiddenException("Ese usuario está baneado de esta sala");
+        }
+        if (roomMemberRepository.existsByRoomIdAndUserId(roomId, targetUserId)) {
+            throw new ConflictException("Ese usuario ya es miembro de la sala");
+        }
+        roomMemberRepository.save(new RoomMember(roomId, targetUserId, RoomRole.MEMBER));
+        announceModeration(room, "INVITED", actor, targetUser, null, targetUser.getDisplayName() + " se unió a la sala.");
+    }
+
+    private ChatRoom getRoomOrThrow(UUID roomId) {
+        return chatRoomRepository.findById(roomId).orElseThrow(() -> new NotFoundException("Sala no encontrada"));
+    }
+
+    private User requireUser(UUID userId) {
+        return userRepository.findById(userId).orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
+    }
+
+    private RoomRole requireOwner(UUID roomId, User actor) {
+        RoomMember membership = roomMemberRepository.findByRoomIdAndUserId(roomId, actor.getId())
+                .orElseThrow(() -> new ForbiddenException("No tienes acceso a esta sala"));
+        if (membership.getRole() != RoomRole.OWNER) {
+            throw new ForbiddenException("Solo el anfitrión puede hacer esto");
+        }
+        return membership.getRole();
+    }
+
+    private RoomRole requireOwnerOrCoHost(UUID roomId, User actor) {
+        RoomMember membership = roomMemberRepository.findByRoomIdAndUserId(roomId, actor.getId())
+                .orElseThrow(() -> new ForbiddenException("No tienes acceso a esta sala"));
+        if (membership.getRole() == RoomRole.MEMBER) {
+            throw new ForbiddenException("No tienes permisos de moderación en esta sala");
+        }
+        return membership.getRole();
+    }
+
+    /** Un coanfitrión solo puede moderar miembros comunes — nunca al anfitrión ni a otro
+     * coanfitrión. Nadie puede moderarse a sí mismo. El anfitrión puede moderar a cualquiera. */
+    private void requireCanModerate(RoomRole actorRole, RoomMember target, User actor) {
+        if (target.getUserId().equals(actor.getId())) {
+            throw new BadRequestException("No puedes moderarte a ti mismo");
+        }
+        if (actorRole == RoomRole.CO_HOST && target.getRole() != RoomRole.MEMBER) {
+            throw new ForbiddenException("Un coanfitrión no puede moderar al anfitrión ni a otro coanfitrión");
+        }
+    }
+
+    /** Deja un mensaje de sistema legible en el historial (mismo patrón que announceJoin) y además
+     * publica un evento estructurado en un tópico aparte, para que el cliente del usuario afectado
+     * pueda reaccionar (por ejemplo salir de la sala si lo expulsaron) sin tener que parsear texto. */
+    private void announceModeration(
+            ChatRoom room, String eventType, User actor, User target, RoomRole newRole, String systemText) {
+        Message systemMessage = new Message();
+        systemMessage.setRoom(room);
+        systemMessage.setAuthor(null);
+        systemMessage.setType(MessageType.system);
+        systemMessage.setBody(systemText);
+        systemMessage = messageRepository.save(systemMessage);
+        broadcastMessage(room.getId(), toMessageResponse(systemMessage));
+
+        RoomModerationEvent event = new RoomModerationEvent(
+                eventType,
+                room.getId(),
+                target.getId(),
+                target.getDisplayName(),
+                actor.getId(),
+                actor.getDisplayName(),
+                newRole != null ? newRole.name() : null);
+        messagingTemplate.convertAndSend("/topic/rooms/" + room.getId() + "/moderation", event);
+    }
+
     private void requireCanAccess(ChatRoom room, User viewer) {
         if (room.getType() != RoomType.DIRECT) {
             return;
@@ -270,7 +470,11 @@ public class ChatService {
         long memberCount = roomMemberRepository.countByRoomId(room.getId());
         long onlineCount = roomMemberRepository.countOnlineMembers(room.getId());
         boolean favorite = viewer != null && roomFavoriteRepository.existsByRoomIdAndUserId(room.getId(), viewer.getId());
-        boolean joined = viewer != null && roomMemberRepository.existsByRoomIdAndUserId(room.getId(), viewer.getId());
+        String role = viewer == null ? null : roomMemberRepository.findByRoomIdAndUserId(room.getId(), viewer.getId())
+                .map(rm -> rm.getRole().name())
+                .orElse(null);
+        boolean joined = role != null;
+        boolean live = voiceService.isLive(room.getId());
 
         UserSummary peer = null;
         if (room.getType() == RoomType.DIRECT && viewer != null) {
@@ -300,6 +504,8 @@ public class ChatService {
                 onlineCount,
                 favorite,
                 joined,
+                role,
+                live,
                 room.getCreatedAt(),
                 lastMessage);
     }

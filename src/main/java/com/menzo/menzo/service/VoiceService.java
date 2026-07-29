@@ -98,6 +98,12 @@ public class VoiceService {
         return new VoiceParticipantsResponse(summaries);
     }
 
+    /** Usado por ChatService para marcar una sala como EN VIVO en los listados — la presencia de
+     * voz es la única fuente de verdad, no hay una bandera "live" separada que se pueda desincronizar. */
+    public boolean isLive(UUID roomId) {
+        return !participantsByRoom.getOrDefault(roomId, Set.of()).isEmpty();
+    }
+
     private void requireMember(UUID roomId, User me) {
         if (!chatRoomRepository.existsById(roomId)) {
             throw new NotFoundException("Sala no encontrada");
