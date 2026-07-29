@@ -96,6 +96,20 @@ public class ChatService {
                 .toList();
     }
 
+    /** Solo las salas públicas que están en vivo ahora mismo, para el carrusel "En vivo ahora" —
+     * evita traer y descartar todas las salas públicas solo para filtrar por live (lo que haría
+     * listDiscoverRooms), yendo directo al directorio persistido de VoiceService. */
+    @Transactional(readOnly = true)
+    public List<ChatRoomResponse> listLiveRooms(User viewer) {
+        List<UUID> liveRoomIds = voiceService.liveRoomIds();
+        if (liveRoomIds.isEmpty()) {
+            return List.of();
+        }
+        return chatRoomRepository.findAllById(liveRoomIds).stream()
+                .map(room -> toRoomResponse(room, viewer))
+                .toList();
+    }
+
     /** Todas las salas públicas, unidas o no — para descubrir/explorar. */
     @Transactional(readOnly = true)
     public List<ChatRoomResponse> listDiscoverRooms(String sort, User viewer) {

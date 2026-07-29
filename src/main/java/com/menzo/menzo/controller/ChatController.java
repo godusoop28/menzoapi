@@ -54,6 +54,11 @@ public class ChatController {
         return chatService.listDiscoverRooms(sort, viewer);
     }
 
+    @GetMapping("/live")
+    public List<ChatRoomResponse> liveRooms(@AuthenticationPrincipal User viewer) {
+        return chatService.listLiveRooms(viewer);
+    }
+
     @PatchMapping("/{id}")
     public ChatRoomResponse updateRoom(
             @PathVariable UUID id, @AuthenticationPrincipal User me, @RequestBody UpdateRoomRequest request) {
