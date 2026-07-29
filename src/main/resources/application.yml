@@ -53,6 +53,10 @@ menzo:
   cloudinary:
     # Formato: cloudinary://<api_key>:<api_secret>@<cloud_name> (se configura en Render como secreto).
     url: ${CLOUDINARY_URL:}
+  agora:
+    # App ID y App Certificate del proyecto en Agora Console (se configuran en Render como secretos).
+    app-id: ${AGORA_APP_ID:}
+    app-certificate: ${AGORA_APP_CERTIFICATE:}
 
 springdoc:
   swagger-ui:
