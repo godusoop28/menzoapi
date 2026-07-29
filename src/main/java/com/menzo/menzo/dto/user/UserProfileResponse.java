@@ -4,6 +4,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import com.menzo.menzo.domain.user.RelationshipStatus;
+
 public record UserProfileResponse(
         UUID id,
         String displayName,
@@ -27,5 +29,7 @@ public record UserProfileResponse(
         boolean isOnline,
         List<String> badges,
         boolean followedByMe,
-        boolean followsMe) {
+        boolean followsMe,
+        boolean areFriends,
+        RelationshipStatus relationshipStatus) {
 }

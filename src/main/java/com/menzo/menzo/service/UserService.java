@@ -249,30 +249,26 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserProfileResponse> getFollowers(UUID userId, User viewer) {
         UUID viewerId = viewer != null ? viewer.getId() : null;
-        return followRepository.findByFollowingId(userId).stream()
-                .map(Follow::getFollowerId)
-                .map(id -> userRepository.findById(id).orElse(null))
-                .filter(u -> u != null)
-                .map(u -> profileMapper.toProfile(u, viewerId))
-                .toList();
+        List<UUID> followerIds = followRepository.findByFollowingId(userId).stream().map(Follow::getFollowerId).toList();
+        List<User> users = userRepository.findAllById(followerIds);
+        return profileMapper.toProfiles(users, viewerId);
     }
 
     @Transactional(readOnly = true)
     public List<UserProfileResponse> getFollowing(UUID userId, User viewer) {
         UUID viewerId = viewer != null ? viewer.getId() : null;
-        return followRepository.findByFollowerId(userId).stream()
-                .map(Follow::getFollowingId)
-                .map(id -> userRepository.findById(id).orElse(null))
-                .filter(u -> u != null)
-                .map(u -> profileMapper.toProfile(u, viewerId))
-                .toList();
+        List<UUID> followingIds = followRepository.findByFollowerId(userId).stream().map(Follow::getFollowingId).toList();
+        List<User> users = userRepository.findAllById(followingIds);
+        return profileMapper.toProfiles(users, viewerId);
     }
 
     @Transactional(readOnly = true)
     public PageResponse<UserProfileResponse> search(String query, Pageable pageable, User viewer) {
         UUID viewerId = viewer != null ? viewer.getId() : null;
         Page<User> results = userRepository.search(query, pageable);
-        return PageResponse.of(results, u -> profileMapper.toProfile(u, viewerId));
+        List<UserProfileResponse> profiles = profileMapper.toProfiles(results.getContent(), viewerId);
+        return new PageResponse<>(
+                profiles, results.getNumber(), results.getSize(), results.getTotalElements(), results.getTotalPages(), results.hasNext());
     }
 
     @Transactional
