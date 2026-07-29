@@ -1,5 +1,8 @@
 package com.menzo.menzo.service;
 
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -532,6 +535,13 @@ public class ChatService {
                 message.getType().name(),
                 message.getBody(),
                 message.getImageUri(),
-                message.getCreatedAt());
+                formatInstant(message.getCreatedAt()));
+    }
+
+    /** Trunca a milisegundos antes de convertir a String — Hermes (el motor JS de React Native)
+     * no parsea de forma confiable ISO 8601 con más de 3 decimales. Se hace acá, a mano, en vez
+     * de confiar en que el ObjectMapper serialice Instant así globalmente (ver JacksonConfig). */
+    private static String formatInstant(Instant instant) {
+        return DateTimeFormatter.ISO_INSTANT.format(instant.truncatedTo(ChronoUnit.MILLIS));
     }
 }
