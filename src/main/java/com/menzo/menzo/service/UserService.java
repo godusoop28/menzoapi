@@ -10,10 +10,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.menzo.menzo.domain.chat.ChatRoom;
-import com.menzo.menzo.domain.chat.Message;
-import com.menzo.menzo.domain.chat.MessageType;
-import com.menzo.menzo.domain.chat.RoomMember;
 import com.menzo.menzo.domain.chat.WallComment;
 import com.menzo.menzo.domain.chat.WallCommentLike;
 import com.menzo.menzo.domain.chat.WallMessage;
@@ -42,9 +38,6 @@ import com.menzo.menzo.dto.user.WallMessageResponse;
 import com.menzo.menzo.exception.BadRequestException;
 import com.menzo.menzo.exception.ConflictException;
 import com.menzo.menzo.exception.NotFoundException;
-import com.menzo.menzo.repository.chat.ChatRoomRepository;
-import com.menzo.menzo.repository.chat.MessageRepository;
-import com.menzo.menzo.repository.chat.RoomMemberRepository;
 import com.menzo.menzo.repository.chat.WallCommentLikeRepository;
 import com.menzo.menzo.repository.chat.WallCommentRepository;
 import com.menzo.menzo.repository.chat.WallMessageRepository;
@@ -61,7 +54,6 @@ import com.menzo.menzo.service.mapper.ProfileMapper;
 @Service
 public class UserService {
 
-    private static final String MAIN_ROOM_SLUG = "main";
     private static final String NEWCOMER_BADGE_ID = "recien-llegado";
 
     private final UserRepository userRepository;
@@ -71,9 +63,6 @@ public class UserService {
     private final FollowRepository followRepository;
     private final ProfileVisitRepository profileVisitRepository;
     private final UserSettingsRepository userSettingsRepository;
-    private final ChatRoomRepository chatRoomRepository;
-    private final RoomMemberRepository roomMemberRepository;
-    private final MessageRepository messageRepository;
     private final NotificationRepository notificationRepository;
     private final WallMessageRepository wallMessageRepository;
     private final WallCommentRepository wallCommentRepository;
@@ -88,9 +77,6 @@ public class UserService {
             FollowRepository followRepository,
             ProfileVisitRepository profileVisitRepository,
             UserSettingsRepository userSettingsRepository,
-            ChatRoomRepository chatRoomRepository,
-            RoomMemberRepository roomMemberRepository,
-            MessageRepository messageRepository,
             NotificationRepository notificationRepository,
             WallMessageRepository wallMessageRepository,
             WallCommentRepository wallCommentRepository,
@@ -103,9 +89,6 @@ public class UserService {
         this.followRepository = followRepository;
         this.profileVisitRepository = profileVisitRepository;
         this.userSettingsRepository = userSettingsRepository;
-        this.chatRoomRepository = chatRoomRepository;
-        this.roomMemberRepository = roomMemberRepository;
-        this.messageRepository = messageRepository;
         this.notificationRepository = notificationRepository;
         this.wallMessageRepository = wallMessageRepository;
         this.wallCommentRepository = wallCommentRepository;
@@ -143,8 +126,8 @@ public class UserService {
         me.setAura(aura);
         me.setAvatarUri(request.avatarUri());
         me.setAvatarGradient(request.avatarGradient());
-        me.setStatusText("Acaba de regresar");
-        me.setBio("Volví para encontrar a las personas que hicieron especial aquella época.");
+        me.setStatusText("");
+        me.setBio("");
         me.setOnboardingCompleted(true);
 
         me.getInterests().clear();
@@ -162,30 +145,18 @@ public class UserService {
 
         userRepository.save(me);
 
-        welcomeIntoCommunity(me);
+        sendWelcomeNotification(me);
 
         return profileMapper.toProfile(me, me.getId());
     }
 
-    private void welcomeIntoCommunity(User user) {
+    private void sendWelcomeNotification(User user) {
         Notification notification = new Notification();
         notification.setRecipient(user);
         notification.setCategory(NotificationCategory.seguimientos);
-        notification.setTitle("Bienvenido de vuelta, " + user.getDisplayName());
-        notification.setBody("Un lugar para volver a encontrarnos. Tu perfil ya está listo.");
+        notification.setTitle("¡Bienvenido a Menzo, " + user.getDisplayName() + "!");
+        notification.setBody("Tu perfil ya está listo. Explorá salas y empezá a conectar.");
         notificationRepository.save(notification);
-
-        chatRoomRepository.findBySlug(MAIN_ROOM_SLUG).ifPresent(mainRoom -> {
-            if (!roomMemberRepository.existsByRoomIdAndUserId(mainRoom.getId(), user.getId())) {
-                roomMemberRepository.save(new RoomMember(mainRoom.getId(), user.getId()));
-            }
-            Message systemMessage = new Message();
-            systemMessage.setRoom(mainRoom);
-            systemMessage.setAuthor(null);
-            systemMessage.setType(MessageType.system);
-            systemMessage.setBody(user.getDisplayName() + " volvió a la comunidad.");
-            messageRepository.save(systemMessage);
-        });
     }
 
     @Transactional

@@ -129,7 +129,7 @@ public class DevDataSeeder implements CommandLineRunner {
         Message welcomeMessage = new Message();
         welcomeMessage.setRoom(mainRoom);
         welcomeMessage.setType(MessageType.system);
-        welcomeMessage.setBody("La sala del reencuentro está lista. Sé bienvenido.");
+        welcomeMessage.setBody("El chat general está listo. Sé bienvenido.");
         messageRepository.save(welcomeMessage);
 
         Message chat = new Message();
@@ -142,9 +142,9 @@ public class DevDataSeeder implements CommandLineRunner {
         Post textPost = new Post();
         textPost.setAuthor(emy);
         textPost.setType(PostType.text);
-        textPost.setBody("Esto lo escribí yo mil veces en mi cabeza y nunca lo publiqué. Volvimos.");
+        textPost.setBody("Esto lo escribí yo mil veces en mi cabeza y nunca lo publiqué. Aquí va.");
         textPost.setFeatured(true);
-        textPost.setTags(new java.util.HashSet<>(List.of("nostalgia", "reencuentro")));
+        textPost.setTags(new java.util.HashSet<>(List.of("arte", "escritura")));
         textPost = postRepository.save(textPost);
         postLikeRepository.save(new PostLike(textPost.getId(), dais.getId()));
         postLikeRepository.save(new PostLike(textPost.getId(), ren.getId()));

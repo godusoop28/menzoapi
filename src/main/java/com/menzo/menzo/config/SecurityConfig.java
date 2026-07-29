@@ -72,6 +72,11 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/files/**").permitAll()
+                        // El handshake WS no puede llevar el header Authorization (la API
+                        // WebSocket del navegador/RN no permite cabeceras HTTP en el upgrade) —
+                        // la autenticación real ocurre en el frame STOMP CONNECT, ver
+                        // StompAuthChannelInterceptor.
+                        .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/docs/**", "/api-docs/**", "/swagger-ui/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         // Personal endpoints must stay authenticated even though the

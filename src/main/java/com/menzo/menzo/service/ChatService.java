@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,6 +45,7 @@ public class ChatService {
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final ProfileMapper profileMapper;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public ChatService(
             ChatRoomRepository chatRoomRepository,
@@ -51,13 +53,15 @@ public class ChatService {
             RoomFavoriteRepository roomFavoriteRepository,
             MessageRepository messageRepository,
             UserRepository userRepository,
-            ProfileMapper profileMapper) {
+            ProfileMapper profileMapper,
+            SimpMessagingTemplate messagingTemplate) {
         this.chatRoomRepository = chatRoomRepository;
         this.roomMemberRepository = roomMemberRepository;
         this.roomFavoriteRepository = roomFavoriteRepository;
         this.messageRepository = messageRepository;
         this.userRepository = userRepository;
         this.profileMapper = profileMapper;
+        this.messagingTemplate = messagingTemplate;
     }
 
     /** Solo las salas a las que el usuario ya se unió (públicas o directas) — "Mis chats". */
@@ -125,7 +129,30 @@ public class ChatService {
         }
         if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
             roomMemberRepository.save(new RoomMember(roomId, me.getId()));
+            announceJoin(room, me);
         }
+    }
+
+    /** Anuncia en la sala que alguien se unió. Solo para salas públicas — nadie necesita ver un
+     * aviso de "se unió" en una conversación directa, y el llamador ya se aseguró de que esta es
+     * la primera vez que este usuario entra (para no spamear el chat en reintentos). */
+    private void announceJoin(ChatRoom room, User user) {
+        if (room.getType() != RoomType.PUBLIC) {
+            return;
+        }
+        Message systemMessage = new Message();
+        systemMessage.setRoom(room);
+        systemMessage.setAuthor(null);
+        systemMessage.setType(MessageType.system);
+        systemMessage.setBody(user.getDisplayName() + " se unió a la sala.");
+        systemMessage = messageRepository.save(systemMessage);
+        broadcastMessage(room.getId(), toMessageResponse(systemMessage));
+    }
+
+    /** Empuja el mensaje a todos los que estén suscritos a la sala por WebSocket — reemplaza el
+     * polling que hacían antes los dos frontends. */
+    private void broadcastMessage(UUID roomId, MessageResponse response) {
+        messagingTemplate.convertAndSend("/topic/rooms/" + roomId + "/messages", response);
     }
 
     /** Cualquier miembro (de una sala pública o de una conversación directa) puede fijar
@@ -205,6 +232,7 @@ public class ChatService {
             requireCanAccess(room, me);
         } else if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
             roomMemberRepository.save(new RoomMember(roomId, me.getId()));
+            announceJoin(room, me);
         }
 
         Message message = new Message();
@@ -215,7 +243,9 @@ public class ChatService {
         message.setImageUri(request.imageUri());
         message = messageRepository.save(message);
 
-        return toMessageResponse(message);
+        MessageResponse response = toMessageResponse(message);
+        broadcastMessage(roomId, response);
+        return response;
     }
 
     @Transactional(readOnly = true)
