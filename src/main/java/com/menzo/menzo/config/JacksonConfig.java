@@ -49,15 +49,16 @@ public class JacksonConfig {
 
     /**
      * Jackson2ObjectMapperBuilder ya trae los módulos estándar de Spring Boot (JavaTimeModule,
-     * etc.) registrados automáticamente vía findAndRegisterModules(); instantMillisModule() se
-     * agrega DESPUÉS con modulesToInstall(...), así que su serializador de Instant gana sobre
-     * el de JavaTimeModule para ese mismo tipo. Este es el único ObjectMapper de toda la app —
-     * tanto Spring MVC (REST) como el WebSocketConfig (STOMP) lo usan.
+     * etc.) registrados automáticamente. registerModule() se llama acá como un paso aparte,
+     * después de build() — no vía modulesToInstall(...), cuyo orden interno respecto a los
+     * módulos auto-detectados no está garantizado — así que instantMillisModule() gana con
+     * certeza sobre el serializador de Instant que trae JavaTimeModule. Este es el único
+     * ObjectMapper de toda la app — tanto Spring MVC (REST) como el WebSocketConfig (STOMP) lo usan.
      */
     @Bean
     public ObjectMapper objectMapper() {
-        return Jackson2ObjectMapperBuilder.json()
-                .modulesToInstall(instantMillisModule())
-                .build();
+        ObjectMapper mapper = Jackson2ObjectMapperBuilder.json().build();
+        mapper.registerModule(instantMillisModule());
+        return mapper;
     }
 }
