@@ -342,7 +342,10 @@ public class UserService {
         message.setProfile(profile);
         message.setAuthor(me);
         message.setBody(request.body());
-        message = wallMessageRepository.save(message);
+        // saveAndFlush: @CreationTimestamp recién completa createdAt al ejecutarse el INSERT
+        // (al hacer flush), no al llamar a save(). Sin esto, toWallMessageResponse (misma
+        // transacción, un par de líneas abajo) leería createdAt en null.
+        message = wallMessageRepository.saveAndFlush(message);
 
         return toWallMessageResponse(message);
     }
@@ -373,7 +376,7 @@ public class UserService {
         comment.setWallMessage(wallMessage);
         comment.setAuthor(me);
         comment.setBody(request.body());
-        comment = wallCommentRepository.save(comment);
+        comment = wallCommentRepository.saveAndFlush(comment);
 
         return toWallCommentResponse(comment, me.getId());
     }

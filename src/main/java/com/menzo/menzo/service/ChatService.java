@@ -129,7 +129,10 @@ public class ChatService {
         if (request.icon() != null && !request.icon().isBlank()) {
             room.setIcon(request.icon());
         }
-        room = chatRoomRepository.save(room);
+        // saveAndFlush, no save: @CreationTimestamp recién completa createdAt cuando el INSERT
+        // realmente se ejecuta (al hacer flush), no al llamar a save()/persist(). Sin el flush acá,
+        // toRoomResponse (unas líneas más abajo, misma transacción) leería un createdAt en null.
+        room = chatRoomRepository.saveAndFlush(room);
         roomMemberRepository.save(new RoomMember(room.getId(), me.getId(), RoomRole.OWNER));
         return toRoomResponse(room, me);
     }
@@ -162,7 +165,7 @@ public class ChatService {
         systemMessage.setAuthor(null);
         systemMessage.setType(MessageType.system);
         systemMessage.setBody(user.getDisplayName() + " se unió a la sala.");
-        systemMessage = messageRepository.save(systemMessage);
+        systemMessage = messageRepository.saveAndFlush(systemMessage);
         broadcastMessage(room.getId(), toMessageResponse(systemMessage));
     }
 
@@ -231,7 +234,7 @@ public class ChatService {
                     created.setTopic("");
                     created.setGradient("community");
                     created.setIcon("chatbubbles");
-                    created = chatRoomRepository.save(created);
+                    created = chatRoomRepository.saveAndFlush(created);
                     roomMemberRepository.save(new RoomMember(created.getId(), me.getId()));
                     roomMemberRepository.save(new RoomMember(created.getId(), otherUserId));
                     return created;
@@ -261,7 +264,7 @@ public class ChatService {
         message.setType(MessageType.text);
         message.setBody(request.body() == null ? "" : request.body());
         message.setImageUri(request.imageUri());
-        message = messageRepository.save(message);
+        message = messageRepository.saveAndFlush(message);
 
         MessageResponse response = toMessageResponse(message);
         broadcastMessage(roomId, response);
@@ -443,7 +446,7 @@ public class ChatService {
         systemMessage.setAuthor(null);
         systemMessage.setType(MessageType.system);
         systemMessage.setBody(systemText);
-        systemMessage = messageRepository.save(systemMessage);
+        systemMessage = messageRepository.saveAndFlush(systemMessage);
         broadcastMessage(room.getId(), toMessageResponse(systemMessage));
 
         RoomModerationEvent event = new RoomModerationEvent(

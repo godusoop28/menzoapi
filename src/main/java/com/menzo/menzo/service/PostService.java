@@ -104,7 +104,10 @@ public class PostService {
             post.setEvent(event);
         }
 
-        post = postRepository.save(post);
+        // saveAndFlush: @CreationTimestamp recién completa createdAt al ejecutarse el INSERT (al
+        // hacer flush), no al llamar a save(). Sin esto, toPostResponse (misma transacción, más
+        // abajo) leería createdAt en null.
+        post = postRepository.saveAndFlush(post);
 
         if (request.type() == PostType.poll) {
             if (request.pollOptions() == null || request.pollOptions().size() < 2) {
@@ -235,7 +238,7 @@ public class PostService {
         comment.setPost(post);
         comment.setAuthor(me);
         comment.setBody(request.body());
-        comment = commentRepository.save(comment);
+        comment = commentRepository.saveAndFlush(comment);
 
         post.setCommentCount(post.getCommentCount() + 1);
         postRepository.save(post);
