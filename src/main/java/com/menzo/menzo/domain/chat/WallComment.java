@@ -39,8 +39,15 @@ public class WallComment {
     @JoinColumn(name = "author_id", nullable = false)
     private User author;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_comment_id")
+    private WallComment parentComment;
+
     @Column(nullable = false, columnDefinition = "text")
     private String body;
+
+    @Column(name = "image_uri")
+    private String imageUri;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

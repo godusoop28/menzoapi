@@ -8,6 +8,7 @@ public record WallMessageResponse(
         UUID profileId,
         UserSummary author,
         String body,
+        String imageUri,
         Instant createdAt,
         long commentCount) {
 }

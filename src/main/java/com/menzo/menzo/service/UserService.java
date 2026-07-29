@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +32,7 @@ import com.menzo.menzo.dto.user.SettingsResponse;
 import com.menzo.menzo.dto.user.UpdateProfileRequest;
 import com.menzo.menzo.dto.user.UpdateSettingsRequest;
 import com.menzo.menzo.dto.user.UserProfileResponse;
+import com.menzo.menzo.dto.user.WallCommentEvent;
 import com.menzo.menzo.dto.user.WallCommentRequest;
 import com.menzo.menzo.dto.user.WallCommentResponse;
 import com.menzo.menzo.dto.user.WallMessageRequest;
@@ -68,6 +70,7 @@ public class UserService {
     private final WallCommentRepository wallCommentRepository;
     private final WallCommentLikeRepository wallCommentLikeRepository;
     private final ProfileMapper profileMapper;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public UserService(
             UserRepository userRepository,
@@ -81,7 +84,8 @@ public class UserService {
             WallMessageRepository wallMessageRepository,
             WallCommentRepository wallCommentRepository,
             WallCommentLikeRepository wallCommentLikeRepository,
-            ProfileMapper profileMapper) {
+            ProfileMapper profileMapper,
+            SimpMessagingTemplate messagingTemplate) {
         this.userRepository = userRepository;
         this.auraRepository = auraRepository;
         this.interestRepository = interestRepository;
@@ -94,6 +98,7 @@ public class UserService {
         this.wallCommentRepository = wallCommentRepository;
         this.wallCommentLikeRepository = wallCommentLikeRepository;
         this.profileMapper = profileMapper;
+        this.messagingTemplate = messagingTemplate;
     }
 
     @Transactional(readOnly = true)
@@ -338,10 +343,13 @@ public class UserService {
         User profile = userRepository.findById(profileId)
                 .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
 
+        String body = requireBodyOrImage(request.body(), request.imageUri());
+
         WallMessage message = new WallMessage();
         message.setProfile(profile);
         message.setAuthor(me);
-        message.setBody(request.body());
+        message.setBody(body);
+        message.setImageUri(blankToNull(request.imageUri()));
         // saveAndFlush: @CreationTimestamp recién completa createdAt al ejecutarse el INSERT
         // (al hacer flush), no al llamar a save(). Sin esto, toWallMessageResponse (misma
         // transacción, un par de líneas abajo) leería createdAt en null.
@@ -363,6 +371,7 @@ public class UserService {
                 message.getProfile().getId(),
                 profileMapper.toSummary(message.getAuthor()),
                 message.getBody(),
+                message.getImageUri(),
                 message.getCreatedAt(),
                 wallCommentRepository.countByWallMessageId(message.getId()));
     }
@@ -372,21 +381,85 @@ public class UserService {
         WallMessage wallMessage = wallMessageRepository.findById(wallMessageId)
                 .orElseThrow(() -> new NotFoundException("Mensaje de muro no encontrado"));
 
+        String body = requireBodyOrImage(request.body(), request.imageUri());
+
+        WallComment parentComment = null;
+        if (request.parentCommentId() != null) {
+            parentComment = wallCommentRepository.findById(request.parentCommentId())
+                    .orElseThrow(() -> new NotFoundException("Comentario no encontrado"));
+            if (!parentComment.getWallMessage().getId().equals(wallMessageId)) {
+                throw new BadRequestException("El comentario al que respondés no pertenece a esta publicación");
+            }
+        }
+
         WallComment comment = new WallComment();
         comment.setWallMessage(wallMessage);
         comment.setAuthor(me);
-        comment.setBody(request.body());
+        comment.setParentComment(parentComment);
+        comment.setBody(body);
+        comment.setImageUri(blankToNull(request.imageUri()));
         comment = wallCommentRepository.saveAndFlush(comment);
 
-        return toWallCommentResponse(comment, me.getId());
+        WallCommentResponse response = toWallCommentResponse(comment, me.getId());
+        messagingTemplate.convertAndSend(
+                "/topic/wall/" + wallMessageId + "/comments", WallCommentEvent.created(response));
+
+        notifyWallComment(me, wallMessage, parentComment);
+
+        return response;
+    }
+
+    private void notifyWallComment(User commenter, WallMessage wallMessage, WallComment parentComment) {
+        User postAuthor = wallMessage.getAuthor();
+        if (!postAuthor.getId().equals(commenter.getId())) {
+            Notification notification = new Notification();
+            notification.setRecipient(postAuthor);
+            notification.setCategory(NotificationCategory.comentarios);
+            notification.setTitle(commenter.getDisplayName() + " comentó en tu muro");
+            notification.setBody("Revisa qué te escribió.");
+            notification.setRelatedUser(commenter);
+            notificationRepository.save(notification);
+        }
+
+        if (parentComment != null) {
+            User parentAuthor = parentComment.getAuthor();
+            boolean alreadyNotified = parentAuthor.getId().equals(postAuthor.getId());
+            if (!parentAuthor.getId().equals(commenter.getId()) && !alreadyNotified) {
+                Notification notification = new Notification();
+                notification.setRecipient(parentAuthor);
+                notification.setCategory(NotificationCategory.comentarios);
+                notification.setTitle(commenter.getDisplayName() + " respondió tu comentario");
+                notification.setBody("Revisa qué te escribió.");
+                notification.setRelatedUser(commenter);
+                notificationRepository.save(notification);
+            }
+        }
     }
 
     @Transactional(readOnly = true)
-    public List<WallCommentResponse> listWallComments(UUID wallMessageId, User viewer) {
+    public PageResponse<WallCommentResponse> listWallComments(UUID wallMessageId, Pageable pageable, User viewer) {
         UUID viewerId = viewer != null ? viewer.getId() : null;
-        return wallCommentRepository.findByWallMessageIdOrderByCreatedAtAsc(wallMessageId).stream()
-                .map(comment -> toWallCommentResponse(comment, viewerId))
-                .toList();
+        return PageResponse.of(
+                wallCommentRepository.findByWallMessageIdOrderByCreatedAtAsc(wallMessageId, pageable),
+                comment -> toWallCommentResponse(comment, viewerId));
+    }
+
+    @Transactional
+    public void deleteWallComment(User me, UUID commentId) {
+        WallComment comment = wallCommentRepository.findById(commentId)
+                .orElseThrow(() -> new NotFoundException("Comentario no encontrado"));
+
+        boolean isAuthor = comment.getAuthor().getId().equals(me.getId());
+        boolean isWallOwner = comment.getWallMessage().getProfile().getId().equals(me.getId());
+        if (!isAuthor && !isWallOwner) {
+            throw new BadRequestException("No podés borrar este comentario");
+        }
+
+        UUID wallMessageId = comment.getWallMessage().getId();
+        wallCommentRepository.delete(comment);
+
+        messagingTemplate.convertAndSend(
+                "/topic/wall/" + wallMessageId + "/comments", WallCommentEvent.deleted(commentId));
     }
 
     @Transactional
@@ -411,10 +484,29 @@ public class UserService {
         return new WallCommentResponse(
                 comment.getId(),
                 comment.getWallMessage().getId(),
+                comment.getParentComment() != null ? comment.getParentComment().getId() : null,
                 profileMapper.toSummary(comment.getAuthor()),
                 comment.getBody(),
+                comment.getImageUri(),
                 comment.getCreatedAt(),
                 likeCount,
                 likedByMe);
+    }
+
+    /** Body y/o imagen: al menos uno de los dos tiene que traer contenido real (una publicación o
+     * comentario no puede quedar completamente vacío), pero ninguno es obligatorio por separado —
+     * así se permite un comentario solo de imagen o solo de texto. La columna `body` sigue siendo
+     * NOT NULL en la base, así que un body ausente se guarda como cadena vacía. */
+    private String requireBodyOrImage(String body, String imageUri) {
+        String trimmedBody = body == null ? "" : body.trim();
+        boolean hasImage = imageUri != null && !imageUri.isBlank();
+        if (trimmedBody.isEmpty() && !hasImage) {
+            throw new BadRequestException("Escribí algo o agregá una imagen");
+        }
+        return trimmedBody;
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 }

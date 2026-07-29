@@ -131,9 +131,11 @@ public class UserController {
     }
 
     @GetMapping("/wall/{messageId}/comments")
-    public List<WallCommentResponse> wallComments(
-            @PathVariable UUID messageId, @AuthenticationPrincipal User viewer) {
-        return userService.listWallComments(messageId, viewer);
+    public PageResponse<WallCommentResponse> wallComments(
+            @PathVariable UUID messageId,
+            @PageableDefault(size = 30) Pageable pageable,
+            @AuthenticationPrincipal User viewer) {
+        return userService.listWallComments(messageId, pageable, viewer);
     }
 
     @PostMapping("/wall/{messageId}/comments")
@@ -141,6 +143,12 @@ public class UserController {
     public WallCommentResponse addWallComment(
             @PathVariable UUID messageId, @AuthenticationPrincipal User me, @Valid @RequestBody WallCommentRequest request) {
         return userService.addWallComment(me, messageId, request);
+    }
+
+    @DeleteMapping("/wall/comments/{commentId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteWallComment(@PathVariable UUID commentId, @AuthenticationPrincipal User me) {
+        userService.deleteWallComment(me, commentId);
     }
 
     @PutMapping("/wall/comments/{commentId}/like")

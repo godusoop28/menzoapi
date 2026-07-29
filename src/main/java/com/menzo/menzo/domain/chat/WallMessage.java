@@ -42,6 +42,9 @@ public class WallMessage {
     @Column(nullable = false, columnDefinition = "text")
     private String body;
 
+    @Column(name = "image_uri")
+    private String imageUri;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
