@@ -98,8 +98,11 @@ public class ChatService {
 
     /** Solo las salas públicas que están en vivo ahora mismo, para el carrusel "En vivo ahora" —
      * evita traer y descartar todas las salas públicas solo para filtrar por live (lo que haría
-     * listDiscoverRooms), yendo directo al directorio persistido de VoiceService. */
-    @Transactional(readOnly = true)
+     * listDiscoverRooms), yendo directo al directorio persistido de VoiceService.
+     * No es readOnly: voiceService.liveRoomIds() ejecuta un UPDATE de reconciliación
+     * (endStaleSessions) que, por propagación REQUIRED, correría dentro de esta misma
+     * transacción — si esta fuera readOnly, Postgres rechaza esa escritura. */
+    @Transactional
     public List<ChatRoomResponse> listLiveRooms(User viewer) {
         List<UUID> liveRoomIds = voiceService.liveRoomIds();
         if (liveRoomIds.isEmpty()) {
