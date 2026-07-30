@@ -1,5 +1,6 @@
 package com.menzo.menzo.service;
 
+import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -8,8 +9,12 @@ import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
@@ -19,7 +24,6 @@ import com.menzo.menzo.config.YoutubeProperties;
 import com.menzo.menzo.dto.music.YoutubeSearchResult;
 import com.menzo.menzo.exception.ApiException;
 import com.menzo.menzo.exception.BadRequestException;
-import org.springframework.http.HttpStatus;
 
 /**
  * Único punto de contacto con YouTube Data API v3 en todo el backend. La API key nunca sale de
@@ -29,6 +33,8 @@ import org.springframework.http.HttpStatus;
  */
 @Service
 public class YoutubeClient {
+
+    private static final Logger log = LoggerFactory.getLogger(YoutubeClient.class);
 
     private static final String SEARCH_URL = "https://www.googleapis.com/youtube/v3/search";
     private static final String VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
@@ -52,20 +58,28 @@ public class YoutubeClient {
         factory.setConnectTimeout(CONNECT_TIMEOUT_MS);
         factory.setReadTimeout(READ_TIMEOUT_MS);
         this.restClient = RestClient.builder().requestFactory(factory).build();
+        // Nunca se loguea el valor de la key — solo si está presente o no (ver sección 3 del pedido).
+        if (properties.getApiKey().isBlank()) {
+            log.warn("YouTube integration disabled: missing API key");
+        } else {
+            log.info("YouTube integration enabled");
+        }
     }
 
     /** q puede ser una consulta de texto libre ("Starboy The Weeknd") o un enlace de YouTube —
      * ambos casos devuelven la misma forma de resultado. */
     public List<YoutubeSearchResult> search(UUID actorId, String rawQuery) {
         if (properties.getApiKey().isBlank()) {
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "La búsqueda de música no está disponible en este momento.");
+            log.warn("Menzi DJ search rejected: YOUTUBE_API_KEY is not configured");
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "YOUTUBE_NOT_CONFIGURED",
+                    "La búsqueda de música no está disponible en este momento.");
         }
         String query = normalize(rawQuery);
         if (query.length() < 3) {
-            throw new BadRequestException("Escribí al menos 3 caracteres para buscar.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_SEARCH_QUERY", "Escribí al menos 3 caracteres para buscar.");
         }
         if (query.length() > 100) {
-            throw new BadRequestException("La búsqueda es demasiado larga.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_SEARCH_QUERY", "La búsqueda es demasiado larga.");
         }
 
         rateLimiter.checkAndRecord(actorId);
@@ -119,7 +133,7 @@ public class YoutubeClient {
                     .retrieve()
                     .body(JsonNode.class);
         } catch (RestClientException e) {
-            throw mapError(e);
+            throw mapError("search.list", e);
         }
 
         List<String> videoIds = new ArrayList<>();
@@ -153,7 +167,7 @@ public class YoutubeClient {
                     .retrieve()
                     .body(JsonNode.class);
         } catch (RestClientException e) {
-            throw mapError(e);
+            throw mapError("videos.list", e);
         }
 
         List<YoutubeSearchResult> results = new ArrayList<>();
@@ -223,18 +237,60 @@ public class YoutubeClient {
         return raw.trim().replaceAll("\\s+", " ");
     }
 
-    /** Nunca deja pasar la respuesta cruda de Google (puede incluir detalles internos) — 403
-     * normalmente significa cuota agotada, cualquier otra cosa es "no disponible ahora mismo". */
-    private static ApiException mapError(RestClientException e) {
+    /** Nunca deja pasar la respuesta cruda de Google (puede incluir detalles internos) al cliente —
+     * pero sí registra acá (stage, status HTTP, reason de Google, clase de la excepción) para poder
+     * diagnosticar sin exponer nunca la API key ni la URL completa (ver sección 2 del pedido). Antes
+     * cualquier 403 se asumía "cuota agotada" sin mirar el motivo real — ahora se distingue clave
+     * inválida/restringida (reason=keyInvalid/forbidden) de cuota agotada (reason=quotaExceeded/
+     * dailyLimitExceeded) leyendo el cuerpo del error de Google. */
+    private static ApiException mapError(String stage, RestClientException e) {
         if (e instanceof RestClientResponseException responseException) {
-            if (responseException.getStatusCode().value() == 403) {
-                return new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
+            int status = responseException.getStatusCode().value();
+            String reason = extractReason(responseException);
+            log.warn("Menzi DJ YouTube call failed: stage={}, status={}, reason={}, errorType={}",
+                    stage, status, reason, e.getClass().getSimpleName());
+
+            if (status == 403 && isQuotaReason(reason)) {
+                return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "YOUTUBE_QUOTA_EXCEEDED",
                         "Se alcanzó el límite de búsquedas de música por hoy. Intentá más tarde.");
             }
-            if (responseException.getStatusCode().is4xxClientError()) {
-                return new BadRequestException("No pudimos procesar esa búsqueda.");
+            if (status == 400 || status == 401 || status == 403) {
+                return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "YOUTUBE_AUTH_ERROR",
+                        "La búsqueda de música no está disponible en este momento.");
             }
+            return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "YOUTUBE_UNAVAILABLE",
+                    "YouTube no está disponible en este momento.");
         }
-        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "YouTube no está disponible en este momento.");
+        boolean isTimeout = e instanceof ResourceAccessException && e.getCause() instanceof SocketTimeoutException;
+        log.warn("Menzi DJ YouTube call failed: stage={}, status=n/a, timeout={}, errorType={}",
+                stage, isTimeout, e.getClass().getSimpleName());
+        if (isTimeout) {
+            return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "YOUTUBE_TIMEOUT",
+                    "YouTube tardó demasiado en responder. Intentá de nuevo.");
+        }
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "YOUTUBE_UNAVAILABLE", "YouTube no está disponible en este momento.");
+    }
+
+    /** Google devuelve el motivo real dentro de error.errors[0].reason — nunca en el status HTTP
+     * solo (403 es tanto "cuota agotada" como "clave inválida/restringida"). Se parsea de forma
+     * defensiva: si el cuerpo no es el JSON esperado, se sigue igual con reason=null en vez de
+     * lanzar una excepción nueva mientras se está manejando una. */
+    private static String extractReason(RestClientResponseException responseException) {
+        try {
+            String body = responseException.getResponseBodyAsString();
+            if (body == null || body.isBlank()) return null;
+            JsonNode root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
+            JsonNode errors = root.path("error").path("errors");
+            if (errors.isArray() && !errors.isEmpty()) {
+                return errors.get(0).path("reason").asText(null);
+            }
+            return null;
+        } catch (Exception parseError) {
+            return null;
+        }
+    }
+
+    private static boolean isQuotaReason(String reason) {
+        return "quotaExceeded".equals(reason) || "dailyLimitExceeded".equals(reason) || "rateLimitExceeded".equals(reason);
     }
 }

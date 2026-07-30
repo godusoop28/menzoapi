@@ -3,6 +3,8 @@ package com.menzo.menzo.exception;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -18,10 +20,12 @@ import io.jsonwebtoken.JwtException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ErrorResponse> handleApiException(ApiException ex, WebRequest request) {
         return ResponseEntity.status(ex.getStatus())
-                .body(ErrorResponse.of(ex.getStatus().value(), ex.getStatus().getReasonPhrase(), ex.getMessage(), path(request)));
+                .body(ErrorResponse.of(ex.getStatus().value(), ex.getCode(), ex.getStatus().getReasonPhrase(), ex.getMessage(), path(request)));
     }
 
     /** Respaldo de MusicService.expectedVersion: si dos coanfitriones controlan Menzi DJ casi al
@@ -56,8 +60,13 @@ public class GlobalExceptionHandler {
                 HttpStatus.FORBIDDEN.value(), "Forbidden", "No tienes permiso para esta acción", path(request)));
     }
 
+    /** Antes esta rama devolvía un 500 genérico sin dejar rastro — cualquier excepción no
+     * anticipada (NPE, bug de parseo, lo que sea) quedaba completamente invisible en los logs de
+     * Render. Ahora se loguea la clase y el stack trace completo antes de responder, así la
+     * próxima falla real (por ejemplo, la de Menzi DJ/YouTube) sí se puede diagnosticar. */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUnexpected(Exception ex, WebRequest request) {
+        log.error("Unhandled exception on {}: {}", path(request), ex.getClass().getSimpleName(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ErrorResponse.of(
                 HttpStatus.INTERNAL_SERVER_ERROR.value(), "Internal Server Error",
                 "Ocurrió un error inesperado", path(request)));

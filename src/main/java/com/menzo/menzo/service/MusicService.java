@@ -8,6 +8,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +36,7 @@ import com.menzo.menzo.dto.music.SeekRequest;
 import com.menzo.menzo.dto.music.VersionedRequest;
 import com.menzo.menzo.dto.music.YoutubeSearchResult;
 import com.menzo.menzo.dto.user.UserSummary;
+import com.menzo.menzo.exception.ApiException;
 import com.menzo.menzo.exception.BadRequestException;
 import com.menzo.menzo.exception.ConflictException;
 import com.menzo.menzo.exception.ForbiddenException;
@@ -53,6 +57,8 @@ import com.menzo.menzo.service.mapper.ProfileMapper;
  */
 @Service
 public class MusicService {
+
+    private static final Logger log = LoggerFactory.getLogger(MusicService.class);
 
     private static final Set<QueueItemStatus> STAGE_HISTORY_STATUSES =
             Set.of(QueueItemStatus.PLAYED, QueueItemStatus.SKIPPED);
@@ -93,11 +99,33 @@ public class MusicService {
         return toSnapshot(session);
     }
 
-    @Transactional(readOnly = true)
+    /** No es @Transactional: la llamada a YouTube es una petición HTTP saliente que puede tardar
+     * varios segundos, y no hace ninguna escritura — mantenerla dentro de una transacción solo
+     * retendría una conexión de la pool sin necesidad (ver sección 6 del pedido sobre no dejar
+     * consultas/recursos abiertos más de lo necesario). */
     public List<YoutubeSearchResult> search(UUID roomId, User actor, String q) {
         requireMember(roomId, actor);
         getActiveLiveSessionOrThrow(roomId);
-        return youtubeClient.search(actor.getId(), q);
+        log.info("Menzi DJ search started: roomId={}, userId={}, query={}", roomId, actor.getId(), q);
+        try {
+            List<YoutubeSearchResult> results = youtubeClient.search(actor.getId(), q);
+            log.info("Menzi DJ search succeeded: roomId={}, userId={}, resultCount={}", roomId, actor.getId(), results.size());
+            return results;
+        } catch (ApiException ex) {
+            // Ya es un error controlado (YoutubeClient.mapError) — se relanza tal cual para que
+            // GlobalExceptionHandler lo traduzca al status/code correctos, solo se deja rastro acá.
+            log.warn("Menzi DJ search failed (controlled): roomId={}, userId={}, code={}, status={}",
+                    roomId, actor.getId(), ex.getCode(), ex.getStatus());
+            throw ex;
+        } catch (RuntimeException ex) {
+            // Cualquier otra cosa no anticipada (bug de parseo, NPE, lo que sea) nunca debe llegar
+            // al cliente como un 500 desnudo — se loguea completo (clase + stack trace) para poder
+            // diagnosticarlo, y se traduce a un error de Menzi DJ legible en vez de "Internal Server Error".
+            log.error("Menzi DJ search failed: roomId={}, userId={}, errorType={}",
+                    roomId, actor.getId(), ex.getClass().getSimpleName(), ex);
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "YOUTUBE_UNAVAILABLE",
+                    "Menzi DJ no pudo buscar música en este momento.");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -388,10 +416,11 @@ public class MusicService {
     @Transactional(readOnly = true)
     public List<UUID> findSessionsNeedingAutoAdvance() {
         List<UUID> result = new ArrayList<>();
-        for (LiveMusicSession session : musicSessionRepository.findAll()) {
-            if (session.getStatus() == MusicSessionStatus.PLAYING
-                    && session.getDurationSeconds() != null
-                    && computePosition(session) >= session.getDurationSeconds()) {
+        // Antes era musicSessionRepository.findAll() + filtro en Java — traía la tabla completa
+        // (incluidas sesiones IDLE/PAUSED/STOPPED de LIVEs ya terminados) cada 5s. Solo las
+        // sesiones PLAYING pueden necesitar avanzar solas.
+        for (LiveMusicSession session : musicSessionRepository.findByStatus(MusicSessionStatus.PLAYING)) {
+            if (session.getDurationSeconds() != null && computePosition(session) >= session.getDurationSeconds()) {
                 result.add(session.getId());
             }
         }
@@ -505,7 +534,7 @@ public class MusicService {
 
     private ChatLiveSession getActiveLiveSessionOrThrow(UUID roomId) {
         return chatLiveSessionRepository.findByRoomIdAndStatus(roomId, LiveSessionStatus.ACTIVE)
-                .orElseThrow(() -> new NotFoundException("No hay un LIVE activo en esta sala"));
+                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, "LIVE_NOT_ACTIVE", "No hay un LIVE activo en esta sala"));
     }
 
     private LiveMusicQueueItem findQueueItemOrThrow(UUID musicSessionId, UUID queueItemId) {
@@ -515,15 +544,15 @@ public class MusicService {
 
     private void requireMember(UUID roomId, User me) {
         if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
-            throw new ForbiddenException("No tienes acceso a esta sala");
+            throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "No tienes acceso a esta sala");
         }
     }
 
     private RoomRole requireOwnerOrCoHost(UUID roomId, User actor) {
         RoomMember membership = roomMemberRepository.findByRoomIdAndUserId(roomId, actor.getId())
-                .orElseThrow(() -> new ForbiddenException("No tienes acceso a esta sala"));
+                .orElseThrow(() -> new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "No tienes acceso a esta sala"));
         if (membership.getRole() == RoomRole.MEMBER) {
-            throw new ForbiddenException("Solo el anfitrión o un coanfitrión pueden controlar Menzi DJ");
+            throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Solo el anfitrión o un coanfitrión pueden controlar Menzi DJ");
         }
         return membership.getRole();
     }
