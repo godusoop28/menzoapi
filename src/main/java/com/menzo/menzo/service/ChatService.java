@@ -34,6 +34,8 @@ import com.menzo.menzo.dto.chat.RoomModerationEvent;
 import com.menzo.menzo.dto.chat.SendMessageRequest;
 import com.menzo.menzo.dto.chat.UpdateRoomRequest;
 import com.menzo.menzo.dto.common.PageResponse;
+import com.menzo.menzo.dto.live.LiveEvent;
+import com.menzo.menzo.dto.live.LiveEventType;
 import com.menzo.menzo.dto.user.UserSummary;
 import com.menzo.menzo.exception.BadRequestException;
 import com.menzo.menzo.exception.ConflictException;
@@ -46,6 +48,7 @@ import com.menzo.menzo.repository.chat.RoomFavoriteRepository;
 import com.menzo.menzo.repository.chat.RoomMemberRepository;
 import com.menzo.menzo.repository.user.UserRepository;
 import com.menzo.menzo.service.mapper.ProfileMapper;
+import com.menzo.menzo.util.TextSanitizer;
 
 @Service
 public class ChatService {
@@ -59,6 +62,7 @@ public class ChatService {
     private final ProfileMapper profileMapper;
     private final SimpMessagingTemplate messagingTemplate;
     private final VoiceService voiceService;
+    private final LiveService liveService;
 
     public ChatService(
             ChatRoomRepository chatRoomRepository,
@@ -69,7 +73,8 @@ public class ChatService {
             UserRepository userRepository,
             ProfileMapper profileMapper,
             SimpMessagingTemplate messagingTemplate,
-            VoiceService voiceService) {
+            VoiceService voiceService,
+            LiveService liveService) {
         this.chatRoomRepository = chatRoomRepository;
         this.roomMemberRepository = roomMemberRepository;
         this.roomFavoriteRepository = roomFavoriteRepository;
@@ -79,6 +84,7 @@ public class ChatService {
         this.profileMapper = profileMapper;
         this.messagingTemplate = messagingTemplate;
         this.voiceService = voiceService;
+        this.liveService = liveService;
     }
 
     /** Solo las salas a las que el usuario ya se unió (públicas o directas) — "Mis chats". */
@@ -113,10 +119,13 @@ public class ChatService {
                 .toList();
     }
 
-    /** Todas las salas públicas, unidas o no — para descubrir/explorar. */
+    /** Todas las salas públicas listadas (listed=true), unidas o no — para descubrir/explorar.
+     * Una sala con listed=false (oculta por el OWNER) sigue funcionando normal para quien ya es
+     * miembro, solo no aparece acá. */
     @Transactional(readOnly = true)
     public List<ChatRoomResponse> listDiscoverRooms(String sort, User viewer) {
         List<ChatRoomResponse> rooms = chatRoomRepository.findByType(RoomType.PUBLIC).stream()
+                .filter(ChatRoom::isListed)
                 .map(room -> toRoomResponse(room, viewer))
                 .collect(Collectors.toCollection(ArrayList::new));
         Comparator<ChatRoomResponse> comparator = "popular".equalsIgnoreCase(sort)
@@ -141,14 +150,16 @@ public class ChatService {
         ChatRoom room = new ChatRoom();
         room.setType(RoomType.PUBLIC);
         room.setName(request.name().trim());
-        room.setDescription(request.description() != null ? request.description().trim() : "");
+        room.setDescription(TextSanitizer.normalizeToNull(request.description(), 500));
         room.setTopic(request.topic() != null ? request.topic().trim() : "");
+        room.setCategory(request.category() != null && !request.category().isBlank() ? request.category().trim() : null);
         if (request.gradient() != null && !request.gradient().isBlank()) {
             room.setGradient(request.gradient());
         }
         if (request.icon() != null && !request.icon().isBlank()) {
             room.setIcon(request.icon());
         }
+        room.setUpdatedAt(Instant.now());
         // saveAndFlush, no save: @CreationTimestamp recién completa createdAt cuando el INSERT
         // realmente se ejecuta (al hacer flush), no al llamar a save()/persist(). Sin el flush acá,
         // toRoomResponse (unas líneas más abajo, misma transacción) leería un createdAt en null.
@@ -168,6 +179,9 @@ public class ChatService {
             throw new ForbiddenException("Estás baneado de esta sala");
         }
         if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
+            if (room.getMaxMembers() != null && roomMemberRepository.countByRoomId(roomId) >= room.getMaxMembers()) {
+                throw new ForbiddenException("Esta sala alcanzó su límite de miembros");
+            }
             roomMemberRepository.save(new RoomMember(roomId, me.getId()));
             announceJoin(room, me);
         }
@@ -195,9 +209,11 @@ public class ChatService {
         messagingTemplate.convertAndSend("/topic/rooms/" + roomId + "/messages", response);
     }
 
-    /** Cualquier miembro (de una sala pública o de una conversación directa) puede fijar
-     * portada/fondo — no solo quien la creó. Un valor vacío ("") limpia el campo; null lo deja
-     * sin cambios (mismo patrón de PATCH parcial que el resto de la API). */
+    /** PATCH parcial de la sala. name/description/topic/category/apariencia/allowMembersToInvite/
+     * requiresApproval/maxMembers requieren OWNER o CO_HOST; listed (si aparece en "Chats
+     * públicos"/descubrir) es privacidad y queda restringido al OWNER. En conversaciones DIRECT
+     * (sin roles) se mantiene el comportamiento previo: cualquier miembro puede fijar portada/
+     * fondo/avatar, ya que ahí no hay anfitrión. */
     @Transactional
     public ChatRoomResponse updateRoom(User me, UUID roomId, UpdateRoomRequest request) {
         ChatRoom room = chatRoomRepository.findById(roomId)
@@ -205,14 +221,106 @@ public class ChatService {
         if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
             throw new ForbiddenException("No tienes acceso a esta conversación");
         }
+
+        boolean isDirect = room.getType() == RoomType.DIRECT;
+        if (!isDirect) {
+            requireOwnerOrCoHost(roomId, me);
+        }
+
+        if (request.name() != null && !request.name().isBlank()) {
+            room.setName(request.name().trim());
+        }
+        if (request.description() != null) {
+            room.setDescription(TextSanitizer.normalizeToNull(request.description(), 500));
+        }
+        if (request.topic() != null) {
+            room.setTopic(request.topic().isBlank() ? "" : request.topic().trim());
+        }
+        if (request.category() != null) {
+            room.setCategory(request.category().isBlank() ? null : request.category().trim());
+        }
+        if (request.avatarUri() != null) {
+            room.setAvatarUri(request.avatarUri().isBlank() ? null : request.avatarUri());
+        }
         if (request.coverUri() != null) {
             room.setCoverUri(request.coverUri().isBlank() ? null : request.coverUri());
         }
         if (request.backgroundUri() != null) {
             room.setBackgroundUri(request.backgroundUri().isBlank() ? null : request.backgroundUri());
         }
+        if (request.requiresApproval() != null) {
+            room.setRequiresApproval(request.requiresApproval());
+        }
+        if (request.allowMembersToInvite() != null) {
+            room.setAllowMembersToInvite(request.allowMembersToInvite());
+        }
+        if (request.maxMembers() != null) {
+            room.setMaxMembers(request.maxMembers());
+        }
+        if (request.listed() != null) {
+            if (isDirect) {
+                throw new BadRequestException("Una conversación directa no puede listarse");
+            }
+            requireOwner(roomId, me);
+            room.setListed(request.listed());
+        }
+
+        room.setUpdatedAt(Instant.now());
         room = chatRoomRepository.save(room);
+
+        boolean appearanceChanged = request.avatarUri() != null || request.coverUri() != null || request.backgroundUri() != null;
+        broadcastRoomEvent(room, appearanceChanged ? "CHAT_ROOM_APPEARANCE_UPDATED" : "CHAT_ROOM_UPDATED");
         return toRoomResponse(room, me);
+    }
+
+    /** Solo el OWNER puede ceder la sala — el antiguo OWNER queda como CO_HOST (no vuelve a
+     * MEMBER, para no perder de golpe la capacidad de moderar la sala que acaba de dirigir). */
+    @Transactional
+    public void transferOwnership(User actor, UUID roomId, UUID targetUserId) {
+        getRoomOrThrow(roomId);
+        requireOwner(roomId, actor);
+        if (targetUserId.equals(actor.getId())) {
+            throw new BadRequestException("Ya eres el anfitrión de esta sala");
+        }
+        RoomMember target = roomMemberRepository.findByRoomIdAndUserId(roomId, targetUserId)
+                .orElseThrow(() -> new NotFoundException("Ese usuario no es miembro de la sala"));
+        RoomMember current = roomMemberRepository.findByRoomIdAndUserId(roomId, actor.getId())
+                .orElseThrow(() -> new ForbiddenException("No tienes acceso a esta sala"));
+
+        target.setRole(RoomRole.OWNER);
+        current.setRole(RoomRole.CO_HOST);
+        roomMemberRepository.save(target);
+        roomMemberRepository.save(current);
+
+        User targetUser = requireUser(targetUserId);
+        ChatRoom room = getRoomOrThrow(roomId);
+        announceModeration(room, "ROLE_CHANGED", actor, targetUser, RoomRole.OWNER,
+                targetUser.getDisplayName() + " ahora es el anfitrión de la sala.");
+    }
+
+    /** Zona peligrosa: elimina la sala por completo. Solo el OWNER. Las claves foráneas de
+     * room_members/room_favorites/messages/room_bans/chat_live_sessions/live_participants ya
+     * están declaradas ON DELETE CASCADE (ver migraciones), así que un solo delete alcanza. */
+    @Transactional
+    public void deleteRoom(User actor, UUID roomId) {
+        getRoomOrThrow(roomId);
+        requireOwner(roomId, actor);
+        chatRoomRepository.deleteById(roomId);
+    }
+
+    /** Evento genérico de sala (no de LIVE) — /topic/rooms/{roomId}/room. Reutiliza el mismo
+     * envelope LiveEvent para no introducir un tipo de mensaje más; liveSessionId siempre null
+     * acá porque no aplica a un evento de sala. */
+    private void broadcastRoomEvent(ChatRoom room, String type) {
+        messagingTemplate.convertAndSend(
+                "/topic/rooms/" + room.getId() + "/room",
+                new LiveEvent(
+                        UUID.randomUUID().toString(),
+                        LiveEventType.valueOf(type),
+                        room.getId(),
+                        null,
+                        Instant.now(),
+                        toRoomResponse(room, null)));
     }
 
     @Transactional
@@ -250,10 +358,10 @@ public class ChatService {
                     ChatRoom created = new ChatRoom();
                     created.setType(RoomType.DIRECT);
                     created.setName(null);
-                    created.setDescription("");
                     created.setTopic("");
                     created.setGradient("community");
                     created.setIcon("chatbubbles");
+                    created.setUpdatedAt(Instant.now());
                     created = chatRoomRepository.saveAndFlush(created);
                     roomMemberRepository.save(new RoomMember(created.getId(), me.getId()));
                     roomMemberRepository.save(new RoomMember(created.getId(), otherUserId));
@@ -511,6 +619,8 @@ public class ChatService {
                 .map(this::toLastMessage)
                 .orElse(null);
 
+        ChatRoomResponse.LiveSummary liveSummary = live ? liveService.getSummary(room.getId()) : null;
+
         return new ChatRoomResponse(
                 room.getId(),
                 room.getSlug(),
@@ -520,8 +630,14 @@ public class ChatService {
                 room.getGradient(),
                 room.getIcon(),
                 room.getType().name(),
+                room.getAvatarUri(),
                 room.getCoverUri(),
                 room.getBackgroundUri(),
+                room.getCategory(),
+                room.getMaxMembers(),
+                room.isRequiresApproval(),
+                room.isAllowMembersToInvite(),
+                room.isListed(),
                 peer,
                 memberCount,
                 onlineCount,
@@ -529,7 +645,9 @@ public class ChatService {
                 joined,
                 role,
                 live,
+                liveSummary,
                 room.getCreatedAt(),
+                room.getUpdatedAt(),
                 lastMessage);
     }
 

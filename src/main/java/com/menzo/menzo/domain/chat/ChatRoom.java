@@ -34,8 +34,10 @@ public class ChatRoom {
     @Column(nullable = false, length = 100)
     private String name;
 
-    @Column(nullable = false, columnDefinition = "text")
-    private String description = "";
+    /** Nullable desde V12 — una sala sin descripción guarda NULL, no "". El valor se normaliza
+     * (trim + blank-a-null) en ChatService antes de persistir, nunca acá. */
+    @Column(columnDefinition = "text")
+    private String description;
 
     @Column(nullable = false, length = 150)
     private String topic = "";
@@ -50,13 +52,37 @@ public class ChatRoom {
     @Column(nullable = false, length = 10)
     private RoomType type = RoomType.PUBLIC;
 
+    /** Avatar circular pequeño que identifica la sala en listas/cabecera — distinto de coverUri
+     * (portada horizontal) y backgroundUri (fondo detrás de los mensajes). */
+    @Column(name = "avatar_uri", columnDefinition = "text")
+    private String avatarUri;
+
     @Column(name = "cover_uri", columnDefinition = "text")
     private String coverUri;
 
     @Column(name = "background_uri", columnDefinition = "text")
     private String backgroundUri;
 
+    @Column(length = 40)
+    private String category;
+
+    @Column(name = "max_members")
+    private Integer maxMembers;
+
+    @Column(name = "requires_approval", nullable = false)
+    private boolean requiresApproval = false;
+
+    @Column(name = "allow_members_to_invite", nullable = false)
+    private boolean allowMembersToInvite = true;
+
+    /** Si aparece en "Chats públicos"/descubrir. Solo el OWNER puede cambiarlo (ver ChatService). */
+    @Column(nullable = false)
+    private boolean listed = true;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    @Column(name = "updated_at")
+    private Instant updatedAt;
 }

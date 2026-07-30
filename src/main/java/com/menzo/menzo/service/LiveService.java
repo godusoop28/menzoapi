@@ -1,0 +1,533 @@
+package com.menzo.menzo.service;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.UUID;
+
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.menzo.menzo.config.AgoraProperties;
+import com.menzo.menzo.domain.chat.ChatLiveSession;
+import com.menzo.menzo.domain.chat.ChatRoom;
+import com.menzo.menzo.domain.chat.LiveParticipant;
+import com.menzo.menzo.domain.chat.LiveParticipantRole;
+import com.menzo.menzo.domain.chat.LiveParticipantStatus;
+import com.menzo.menzo.domain.chat.LiveSessionStatus;
+import com.menzo.menzo.domain.chat.RoomMember;
+import com.menzo.menzo.domain.chat.RoomRole;
+import com.menzo.menzo.domain.user.User;
+import com.menzo.menzo.dto.chat.ChatRoomResponse;
+import com.menzo.menzo.dto.live.LiveEvent;
+import com.menzo.menzo.dto.live.LiveEventType;
+import com.menzo.menzo.dto.live.LiveParticipantResponse;
+import com.menzo.menzo.dto.live.LiveSessionResponse;
+import com.menzo.menzo.dto.live.LiveTokenResponse;
+import com.menzo.menzo.dto.live.StartLiveRequest;
+import com.menzo.menzo.dto.live.UpdateLiveRequest;
+import com.menzo.menzo.dto.user.UserSummary;
+import com.menzo.menzo.exception.BadRequestException;
+import com.menzo.menzo.exception.ConflictException;
+import com.menzo.menzo.exception.ForbiddenException;
+import com.menzo.menzo.exception.NotFoundException;
+import com.menzo.menzo.repository.chat.ChatLiveSessionRepository;
+import com.menzo.menzo.repository.chat.ChatRoomRepository;
+import com.menzo.menzo.repository.chat.LiveParticipantRepository;
+import com.menzo.menzo.repository.chat.RoomBanRepository;
+import com.menzo.menzo.repository.chat.RoomMemberRepository;
+import com.menzo.menzo.repository.user.UserRepository;
+import com.menzo.menzo.security.agora.RtcTokenBuilder2;
+import com.menzo.menzo.service.mapper.ProfileMapper;
+import com.menzo.menzo.util.TextSanitizer;
+
+/**
+ * Sistema LIVE moderado: quién puede iniciar/terminar, quién es HOST/CO_HOST/SPEAKER/AUDIENCE,
+ * solicitudes para hablar, y qué rol de Agora (publisher/subscriber) recibe cada quien. Vive
+ * aparte de VoiceService a propósito: VoiceService y sus endpoints /voice/* siguen intactos
+ * porque la app móvil (menzomovil) todavía los usa tal cual (cualquier miembro = publisher) y
+ * esta fase no toca móvil. Ambos comparten la misma tabla chat_live_sessions (una sesión ACTIVE
+ * por sala) para que "¿esta sala está en vivo?" siga siendo una sola fuente de verdad — ver
+ * ChatService.toRoomResponse / VoiceService.isLive.
+ */
+@Service
+public class LiveService {
+
+    private static final int TOKEN_EXPIRE_SECONDS = 3600;
+    private static final long SPEAK_REQUEST_COOLDOWN_SECONDS = 30;
+    private static final List<LiveParticipantRole> SPEAKING_ROLES =
+            List.of(LiveParticipantRole.HOST, LiveParticipantRole.CO_HOST, LiveParticipantRole.SPEAKER);
+
+    private final AgoraProperties agoraProperties;
+    private final ChatRoomRepository chatRoomRepository;
+    private final RoomMemberRepository roomMemberRepository;
+    private final RoomBanRepository roomBanRepository;
+    private final UserRepository userRepository;
+    private final ChatLiveSessionRepository chatLiveSessionRepository;
+    private final LiveParticipantRepository liveParticipantRepository;
+    private final ProfileMapper profileMapper;
+    private final SimpMessagingTemplate messagingTemplate;
+
+    public LiveService(
+            AgoraProperties agoraProperties,
+            ChatRoomRepository chatRoomRepository,
+            RoomMemberRepository roomMemberRepository,
+            RoomBanRepository roomBanRepository,
+            UserRepository userRepository,
+            ChatLiveSessionRepository chatLiveSessionRepository,
+            LiveParticipantRepository liveParticipantRepository,
+            ProfileMapper profileMapper,
+            SimpMessagingTemplate messagingTemplate) {
+        this.agoraProperties = agoraProperties;
+        this.chatRoomRepository = chatRoomRepository;
+        this.roomMemberRepository = roomMemberRepository;
+        this.roomBanRepository = roomBanRepository;
+        this.userRepository = userRepository;
+        this.chatLiveSessionRepository = chatLiveSessionRepository;
+        this.liveParticipantRepository = liveParticipantRepository;
+        this.profileMapper = profileMapper;
+        this.messagingTemplate = messagingTemplate;
+    }
+
+    @Transactional(readOnly = true)
+    public LiveSessionResponse getState(UUID roomId, User viewer) {
+        return chatLiveSessionRepository.findByRoomIdAndStatus(roomId, LiveSessionStatus.ACTIVE)
+                .map(session -> toSessionResponse(session, viewer))
+                .orElse(null);
+    }
+
+    /** Resumen liviano para tarjetas de sala/listados — solo se llama cuando ya se sabe que la
+     * sala está en vivo (VoiceService.isLive), para no pagar esta consulta en salas inactivas. */
+    @Transactional(readOnly = true)
+    public ChatRoomResponse.LiveSummary getSummary(UUID roomId) {
+        return chatLiveSessionRepository.findByRoomIdAndStatus(roomId, LiveSessionStatus.ACTIVE)
+                .map(session -> {
+                    UserSummary host = session.getStartedByUserId() != null
+                            ? userRepository.findById(session.getStartedByUserId()).map(profileMapper::toSummary).orElse(null)
+                            : null;
+                    return new ChatRoomResponse.LiveSummary(
+                            session.getId(),
+                            session.getTitle(),
+                            session.getAnnouncement(),
+                            session.getParticipantCount(),
+                            session.getSpeakerCount(),
+                            host);
+                })
+                .orElse(null);
+    }
+
+    @Transactional
+    public LiveSessionResponse startLive(User actor, UUID roomId, StartLiveRequest request) {
+        getRoomOrThrow(roomId);
+        RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
+        if (chatLiveSessionRepository.findByRoomIdAndStatus(roomId, LiveSessionStatus.ACTIVE).isPresent()) {
+            throw new ConflictException("Ya hay un LIVE activo en esta sala");
+        }
+
+        ChatLiveSession session = new ChatLiveSession();
+        session.setRoomId(roomId);
+        session.setStartedByUserId(actor.getId());
+        session.setStartedAt(Instant.now());
+        session.setLastHeartbeatAt(Instant.now());
+        session.setAgoraChannelName("room-" + roomId);
+        session.setTitle(TextSanitizer.normalizeToNull(request != null ? request.title() : null, 100));
+        session.setDescription(TextSanitizer.normalizeToNull(request != null ? request.description() : null, 500));
+        session.setAnnouncement(TextSanitizer.normalizeToNull(request != null ? request.announcement() : null, 300));
+        session.setParticipantCount(1);
+        session.setSpeakerCount(1);
+        session = chatLiveSessionRepository.saveAndFlush(session);
+
+        LiveParticipant host = new LiveParticipant();
+        host.setLiveSessionId(session.getId());
+        host.setRoomId(roomId);
+        host.setUserId(actor.getId());
+        host.setRole(actorRole == RoomRole.OWNER ? LiveParticipantRole.HOST : LiveParticipantRole.CO_HOST);
+        host.setMicrophoneEnabled(true);
+        liveParticipantRepository.save(host);
+
+        publish(LiveEventType.CHAT_LIVE_STARTED, roomId, session.getId(), toSessionResponse(session, actor));
+        return toSessionResponse(session, actor);
+    }
+
+    @Transactional
+    public void endLive(User actor, UUID roomId) {
+        requireOwnerOrCoHost(roomId, actor);
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+
+        List<LiveParticipant> active = liveParticipantRepository.findByLiveSessionIdAndStatus(
+                session.getId(), LiveParticipantStatus.ACTIVE);
+        Instant now = Instant.now();
+        for (LiveParticipant participant : active) {
+            participant.setStatus(LiveParticipantStatus.LEFT);
+            participant.setLeftAt(now);
+            participant.setMicrophoneEnabled(false);
+        }
+        liveParticipantRepository.saveAll(active);
+
+        session.setStatus(LiveSessionStatus.ENDED);
+        session.setEndedAt(now);
+        session.setParticipantCount(0);
+        session.setSpeakerCount(0);
+        chatLiveSessionRepository.save(session);
+
+        publish(LiveEventType.CHAT_LIVE_ENDED, roomId, session.getId(), toSessionResponse(session, null));
+    }
+
+    @Transactional
+    public LiveSessionResponse updateLiveInfo(User actor, UUID roomId, UpdateLiveRequest request) {
+        requireOwnerOrCoHost(roomId, actor);
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        if (request.title() != null) {
+            session.setTitle(TextSanitizer.normalizeToNull(request.title(), 100));
+        }
+        if (request.description() != null) {
+            session.setDescription(TextSanitizer.normalizeToNull(request.description(), 500));
+        }
+        if (request.announcement() != null) {
+            session.setAnnouncement(TextSanitizer.normalizeToNull(request.announcement(), 300));
+        }
+        session = chatLiveSessionRepository.save(session);
+        publish(LiveEventType.CHAT_LIVE_UPDATED, roomId, session.getId(), toSessionResponse(session, actor));
+        return toSessionResponse(session, actor);
+    }
+
+    @Transactional
+    public LiveSessionResponse joinLive(User me, UUID roomId) {
+        requireMember(roomId, me);
+        if (roomBanRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
+            throw new ForbiddenException("Estás baneado de esta sala");
+        }
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+
+        LiveParticipant participant = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(session.getId(), me.getId())
+                .orElseGet(() -> {
+                    LiveParticipant created = new LiveParticipant();
+                    created.setLiveSessionId(session.getId());
+                    created.setRoomId(roomId);
+                    created.setUserId(me.getId());
+                    created.setRole(defaultRoleFor(roomId, me));
+                    return created;
+                });
+        participant.setStatus(LiveParticipantStatus.ACTIVE);
+        participant.setLeftAt(null);
+        participant.setLastSeenAt(Instant.now());
+        liveParticipantRepository.save(participant);
+
+        recomputeCounts(session);
+        session.setLastHeartbeatAt(Instant.now());
+        chatLiveSessionRepository.save(session);
+
+        publish(LiveEventType.CHAT_LIVE_PARTICIPANT_JOINED, roomId, session.getId(), toParticipantResponse(participant));
+        return toSessionResponse(session, me);
+    }
+
+    @Transactional
+    public void leaveLive(User me, UUID roomId) {
+        chatLiveSessionRepository.findByRoomIdAndStatus(roomId, LiveSessionStatus.ACTIVE).ifPresent(session -> {
+            liveParticipantRepository.findByLiveSessionIdAndUserId(session.getId(), me.getId()).ifPresent(participant -> {
+                if (participant.getStatus() == LiveParticipantStatus.ACTIVE) {
+                    participant.setStatus(LiveParticipantStatus.LEFT);
+                    participant.setLeftAt(Instant.now());
+                    participant.setMicrophoneEnabled(false);
+                    liveParticipantRepository.save(participant);
+                    publish(LiveEventType.CHAT_LIVE_PARTICIPANT_LEFT, roomId, session.getId(),
+                            toParticipantResponse(participant));
+                }
+            });
+            recomputeCounts(session);
+            session.setLastHeartbeatAt(Instant.now());
+            chatLiveSessionRepository.save(session);
+        });
+    }
+
+    @Transactional
+    public LiveTokenResponse getToken(User me, UUID roomId) {
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant participant = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(session.getId(), me.getId())
+                .orElseThrow(() -> new ForbiddenException("Tenés que unirte al LIVE antes de pedir un token"));
+
+        boolean canPublish = SPEAKING_ROLES.contains(participant.getRole());
+        RtcTokenBuilder2.Role agoraRole = canPublish ? RtcTokenBuilder2.Role.ROLE_PUBLISHER : RtcTokenBuilder2.Role.ROLE_SUBSCRIBER;
+        String uid = me.getId().toString();
+        String token = new RtcTokenBuilder2().buildTokenWithUserAccount(
+                agoraProperties.getAppId(),
+                agoraProperties.getAppCertificate(),
+                session.getAgoraChannelName(),
+                uid,
+                agoraRole,
+                TOKEN_EXPIRE_SECONDS,
+                TOKEN_EXPIRE_SECONDS);
+        return new LiveTokenResponse(
+                agoraProperties.getAppId(), session.getAgoraChannelName(), token, uid, canPublish ? "PUBLISHER" : "SUBSCRIBER");
+    }
+
+    @Transactional(readOnly = true)
+    public List<LiveParticipantResponse> listParticipants(UUID roomId) {
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        List<LiveParticipant> participants = new ArrayList<>(
+                liveParticipantRepository.findByLiveSessionIdAndStatus(session.getId(), LiveParticipantStatus.ACTIVE));
+        participants.sort(Comparator.<LiveParticipant>comparingInt(p -> p.getRole().ordinal())
+                .thenComparing(LiveParticipant::getJoinedAt));
+        return participants.stream().map(this::toParticipantResponse).toList();
+    }
+
+    @Transactional
+    public void requestToSpeak(User me, UUID roomId) {
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant participant = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(session.getId(), me.getId())
+                .orElseThrow(() -> new ForbiddenException("Tenés que estar escuchando el LIVE antes de solicitar hablar"));
+
+        if (SPEAKING_ROLES.contains(participant.getRole())) {
+            throw new BadRequestException("Ya podés hablar en este LIVE");
+        }
+        if (participant.getRole() == LiveParticipantRole.REQUESTED) {
+            throw new ConflictException("Ya enviaste una solicitud para hablar");
+        }
+        if (participant.getRejectedAt() != null
+                && participant.getRejectedAt().isAfter(Instant.now().minusSeconds(SPEAK_REQUEST_COOLDOWN_SECONDS))) {
+            throw new ForbiddenException("Esperá un momento antes de volver a solicitar hablar");
+        }
+
+        participant.setRole(LiveParticipantRole.REQUESTED);
+        participant.setRequestedToSpeakAt(Instant.now());
+        liveParticipantRepository.save(participant);
+        publish(LiveEventType.CHAT_LIVE_SPEAKING_REQUESTED, roomId, session.getId(), toParticipantResponse(participant));
+    }
+
+    /** El propio usuario retira su solicitud (distinto de que el OWNER/CO_HOST la rechace): no
+     * aplica el cooldown de rechazo, porque cancelar voluntariamente no debería penalizar a quien
+     * simplemente cambió de opinión. Reutiliza CHAT_LIVE_SPEAKING_REJECTED — para el resto de los
+     * clientes (el panel de solicitudes del anfitrión) el efecto observable es idéntico: esta
+     * solicitud desaparece de la lista de pendientes. */
+    @Transactional
+    public void cancelSpeakRequest(User me, UUID roomId) {
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant participant = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(session.getId(), me.getId())
+                .orElseThrow(() -> new ForbiddenException("No estás en este LIVE"));
+        if (participant.getRole() != LiveParticipantRole.REQUESTED) {
+            throw new BadRequestException("No tenés una solicitud pendiente");
+        }
+        participant.setRole(LiveParticipantRole.AUDIENCE);
+        participant.setRequestedToSpeakAt(null);
+        liveParticipantRepository.save(participant);
+        publish(LiveEventType.CHAT_LIVE_SPEAKING_REJECTED, roomId, session.getId(), toParticipantResponse(participant));
+    }
+
+    @Transactional(readOnly = true)
+    public List<LiveParticipantResponse> listSpeakingRequests(User actor, UUID roomId) {
+        requireOwnerOrCoHost(roomId, actor);
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        return liveParticipantRepository
+                .findByLiveSessionIdAndStatusAndRoleOrderByRequestedToSpeakAtAsc(
+                        session.getId(), LiveParticipantStatus.ACTIVE, LiveParticipantRole.REQUESTED)
+                .stream()
+                .map(this::toParticipantResponse)
+                .toList();
+    }
+
+    @Transactional
+    public void approveSpeaking(User actor, UUID roomId, UUID targetUserId) {
+        requireOwnerOrCoHost(roomId, actor);
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant target = findParticipantOrThrow(session.getId(), targetUserId);
+        if (target.getRole() != LiveParticipantRole.REQUESTED) {
+            throw new BadRequestException("Ese usuario no tiene una solicitud pendiente");
+        }
+        target.setRole(LiveParticipantRole.SPEAKER);
+        target.setApprovedAt(Instant.now());
+        target.setApprovedBy(actor.getId());
+        liveParticipantRepository.save(target);
+
+        recomputeCounts(session);
+        chatLiveSessionRepository.save(session);
+        publish(LiveEventType.CHAT_LIVE_SPEAKING_APPROVED, roomId, session.getId(), toParticipantResponse(target));
+    }
+
+    @Transactional
+    public void rejectSpeaking(User actor, UUID roomId, UUID targetUserId) {
+        requireOwnerOrCoHost(roomId, actor);
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant target = findParticipantOrThrow(session.getId(), targetUserId);
+        if (target.getRole() != LiveParticipantRole.REQUESTED) {
+            throw new BadRequestException("Ese usuario no tiene una solicitud pendiente");
+        }
+        target.setRole(LiveParticipantRole.AUDIENCE);
+        target.setRejectedAt(Instant.now());
+        target.setRequestedToSpeakAt(null);
+        liveParticipantRepository.save(target);
+        publish(LiveEventType.CHAT_LIVE_SPEAKING_REJECTED, roomId, session.getId(), toParticipantResponse(target));
+    }
+
+    @Transactional
+    public void demoteParticipant(User actor, UUID roomId, UUID targetUserId) {
+        RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant target = findParticipantOrThrow(session.getId(), targetUserId);
+        requireCanModerateLiveParticipant(actorRole, target);
+        if (target.getRole() != LiveParticipantRole.SPEAKER && target.getRole() != LiveParticipantRole.CO_HOST) {
+            throw new BadRequestException("Ese usuario no está en el escenario");
+        }
+        target.setRole(LiveParticipantRole.AUDIENCE);
+        target.setMicrophoneEnabled(false);
+        liveParticipantRepository.save(target);
+
+        recomputeCounts(session);
+        chatLiveSessionRepository.save(session);
+        publish(LiveEventType.CHAT_LIVE_PARTICIPANT_DEMOTED, roomId, session.getId(), toParticipantResponse(target));
+    }
+
+    @Transactional
+    public void removeParticipant(User actor, UUID roomId, UUID targetUserId) {
+        RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant target = findParticipantOrThrow(session.getId(), targetUserId);
+        requireCanModerateLiveParticipant(actorRole, target);
+
+        target.setStatus(LiveParticipantStatus.LEFT);
+        target.setLeftAt(Instant.now());
+        target.setMicrophoneEnabled(false);
+        liveParticipantRepository.save(target);
+
+        recomputeCounts(session);
+        chatLiveSessionRepository.save(session);
+        publish(LiveEventType.CHAT_LIVE_PARTICIPANT_LEFT, roomId, session.getId(), toParticipantResponse(target));
+    }
+
+    /** Espejo de estado para que los demás vean el badge de micrófono en tiempo real — la
+     * publicación/mute real del audio ocurre en el cliente vía Agora; esto no otorga permisos. */
+    @Transactional
+    public void setMicrophone(User me, UUID roomId, boolean enabled) {
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant participant = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(session.getId(), me.getId())
+                .orElseThrow(() -> new ForbiddenException("No estás en este LIVE"));
+        if (enabled && !SPEAKING_ROLES.contains(participant.getRole())) {
+            throw new ForbiddenException("No tenés permiso para hablar en este LIVE");
+        }
+        participant.setMicrophoneEnabled(enabled);
+        participant.setLastSeenAt(Instant.now());
+        liveParticipantRepository.save(participant);
+        publish(LiveEventType.CHAT_LIVE_MICROPHONE_CHANGED, roomId, session.getId(), toParticipantResponse(participant));
+    }
+
+    @Transactional
+    public void forceMute(User actor, UUID roomId, UUID targetUserId) {
+        RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant target = findParticipantOrThrow(session.getId(), targetUserId);
+        if (target.getRole() == LiveParticipantRole.HOST && actorRole != RoomRole.OWNER) {
+            throw new ForbiddenException("Solo el anfitrión puede silenciar al anfitrión");
+        }
+        target.setMicrophoneEnabled(false);
+        liveParticipantRepository.save(target);
+        publish(LiveEventType.CHAT_LIVE_MICROPHONE_CHANGED, roomId, session.getId(), toParticipantResponse(target));
+    }
+
+    // ---- helpers -----------------------------------------------------------------------------
+
+    private LiveParticipantRole defaultRoleFor(UUID roomId, User me) {
+        RoomMember membership = roomMemberRepository.findByRoomIdAndUserId(roomId, me.getId()).orElse(null);
+        if (membership == null) {
+            return LiveParticipantRole.AUDIENCE;
+        }
+        return switch (membership.getRole()) {
+            case OWNER -> LiveParticipantRole.HOST;
+            case CO_HOST -> LiveParticipantRole.CO_HOST;
+            case MEMBER -> LiveParticipantRole.AUDIENCE;
+        };
+    }
+
+    private void recomputeCounts(ChatLiveSession session) {
+        long total = liveParticipantRepository.countByLiveSessionIdAndStatus(session.getId(), LiveParticipantStatus.ACTIVE);
+        long speakers = liveParticipantRepository.countByLiveSessionIdAndStatusAndRoleIn(
+                session.getId(), LiveParticipantStatus.ACTIVE, SPEAKING_ROLES);
+        session.setParticipantCount((int) total);
+        session.setSpeakerCount((int) speakers);
+    }
+
+    private LiveParticipant findParticipantOrThrow(UUID liveSessionId, UUID userId) {
+        return liveParticipantRepository.findByLiveSessionIdAndUserId(liveSessionId, userId)
+                .orElseThrow(() -> new NotFoundException("Ese usuario no está en el LIVE"));
+    }
+
+    /** Nadie salvo el OWNER puede tocar al HOST; un CO_HOST tampoco puede tocar a otro CO_HOST —
+     * mismo principio que ChatService.requireCanModerate, aplicado a roles de LIVE. */
+    private void requireCanModerateLiveParticipant(RoomRole actorRole, LiveParticipant target) {
+        if (target.getRole() == LiveParticipantRole.HOST) {
+            throw new ForbiddenException("No se puede moderar al anfitrión del LIVE");
+        }
+        if (actorRole == RoomRole.CO_HOST && target.getRole() == LiveParticipantRole.CO_HOST) {
+            throw new ForbiddenException("Un coanfitrión no puede moderar a otro coanfitrión");
+        }
+    }
+
+    private ChatRoom getRoomOrThrow(UUID roomId) {
+        return chatRoomRepository.findById(roomId).orElseThrow(() -> new NotFoundException("Sala no encontrada"));
+    }
+
+    private ChatLiveSession getActiveSessionOrThrow(UUID roomId) {
+        return chatLiveSessionRepository.findByRoomIdAndStatus(roomId, LiveSessionStatus.ACTIVE)
+                .orElseThrow(() -> new NotFoundException("No hay un LIVE activo en esta sala"));
+    }
+
+    private void requireMember(UUID roomId, User me) {
+        if (!chatRoomRepository.existsById(roomId)) {
+            throw new NotFoundException("Sala no encontrada");
+        }
+        if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
+            throw new ForbiddenException("Tenés que unirte a la sala antes de entrar al LIVE");
+        }
+    }
+
+    private RoomRole requireOwnerOrCoHost(UUID roomId, User actor) {
+        RoomMember membership = roomMemberRepository.findByRoomIdAndUserId(roomId, actor.getId())
+                .orElseThrow(() -> new ForbiddenException("No tienes acceso a esta sala"));
+        if (membership.getRole() == RoomRole.MEMBER) {
+            throw new ForbiddenException("Solo el anfitrión o un coanfitrión pueden hacer esto");
+        }
+        return membership.getRole();
+    }
+
+    private LiveSessionResponse toSessionResponse(ChatLiveSession session, User viewer) {
+        LiveParticipant mine = viewer != null
+                ? liveParticipantRepository.findByLiveSessionIdAndUserId(session.getId(), viewer.getId()).orElse(null)
+                : null;
+        boolean activeMine = mine != null && mine.getStatus() == LiveParticipantStatus.ACTIVE;
+        return new LiveSessionResponse(
+                session.getId(),
+                session.getRoomId(),
+                session.getType().name(),
+                session.getStatus().name(),
+                session.getTitle(),
+                session.getDescription(),
+                session.getAnnouncement(),
+                session.getStartedByUserId(),
+                session.getStartedAt(),
+                session.getParticipantCount(),
+                session.getSpeakerCount(),
+                session.getAgoraChannelName(),
+                activeMine ? mine.getRole().name() : null,
+                activeMine && mine.isMicrophoneEnabled(),
+                activeMine && mine.getRole() == LiveParticipantRole.REQUESTED);
+    }
+
+    private LiveParticipantResponse toParticipantResponse(LiveParticipant participant) {
+        UserSummary user = userRepository.findById(participant.getUserId()).map(profileMapper::toSummary).orElse(null);
+        return new LiveParticipantResponse(
+                user,
+                participant.getRole().name(),
+                participant.isMicrophoneEnabled(),
+                participant.getRequestedToSpeakAt(),
+                participant.getJoinedAt());
+    }
+
+    private void publish(LiveEventType type, UUID roomId, UUID liveSessionId, Object payload) {
+        messagingTemplate.convertAndSend("/topic/rooms/" + roomId + "/live", LiveEvent.of(type, roomId, liveSessionId, payload));
+    }
+}

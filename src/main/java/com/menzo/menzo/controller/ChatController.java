@@ -169,4 +169,16 @@ public class ChatController {
     public void invite(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
         chatService.inviteMember(me, id, userId);
     }
+
+    @PostMapping("/{id}/transfer-ownership/{userId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void transferOwnership(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        chatService.transferOwnership(me, id, userId);
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteRoom(@PathVariable UUID id, @AuthenticationPrincipal User me) {
+        chatService.deleteRoom(me, id);
+    }
 }

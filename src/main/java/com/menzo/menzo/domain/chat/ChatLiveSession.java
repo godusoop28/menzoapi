@@ -56,6 +56,20 @@ public class ChatLiveSession {
     @Column(name = "participant_count", nullable = false)
     private int participantCount;
 
+    @Column(name = "speaker_count", nullable = false)
+    private int speakerCount;
+
+    @Column(length = 100)
+    private String title;
+
+    @Column(columnDefinition = "text")
+    private String description;
+
+    /** Anuncio/franja editable por OWNER/CO_HOST mientras el LIVE está activo — distinto de
+     * description (que es más una nota fija de la sesión). */
+    @Column(columnDefinition = "text")
+    private String announcement;
+
     @Column(name = "agora_channel_name", length = 100)
     private String agoraChannelName;
 
