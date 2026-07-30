@@ -13,17 +13,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.menzo.menzo.config.YoutubeProperties;
 import com.menzo.menzo.dto.music.YoutubeSearchResult;
 import com.menzo.menzo.exception.ApiException;
 import com.menzo.menzo.exception.BadRequestException;
+
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Único punto de contacto con YouTube Data API v3 en todo el backend. La API key nunca sale de
@@ -40,6 +43,13 @@ public class YoutubeClient {
     private static final String VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int READ_TIMEOUT_MS = 8000;
+
+    /** Solo para parsear el cuerpo de error de Google en extractReason — nada que ver con el
+     * ObjectMapper que usa RestClient para deserializar respuestas exitosas (eso lo resuelve Spring
+     * solo, vía message converters, a partir de los DTOs tipados de abajo). Se instancia con
+     * JsonMapper.builder() (Jackson 3) en vez de Jackson2ObjectMapperBuilder — este cliente no debe
+     * depender de ningún tipo de com.fasterxml.jackson.databind (ver YoutubeErrorResponse). */
+    private static final ObjectMapper ERROR_BODY_MAPPER = JsonMapper.builder().build();
 
     /** Cubre youtube.com/watch?v=, youtu.be/, youtube.com/shorts/ y youtube.com/embed/. */
     private static final Pattern YOUTUBE_LINK = Pattern.compile(
@@ -114,7 +124,7 @@ public class YoutubeClient {
     }
 
     private List<YoutubeSearchResult> searchAndEnrich(String query) {
-        JsonNode searchResponse;
+        YoutubeSearchResponse searchResponse;
         try {
             searchResponse = restClient.get()
                     .uri(uriBuilder -> uriBuilder
@@ -131,31 +141,42 @@ public class YoutubeClient {
                             .queryParam("key", properties.getApiKey())
                             .build())
                     .retrieve()
-                    .body(JsonNode.class);
+                    .body(YoutubeSearchResponse.class);
+        } catch (HttpMessageConversionException e) {
+            throw mapJsonMappingError("search.list", e);
         } catch (RestClientException e) {
             throw mapError("search.list", e);
         }
 
-        List<String> videoIds = new ArrayList<>();
-        if (searchResponse != null && searchResponse.has("items")) {
-            for (JsonNode item : searchResponse.get("items")) {
-                String videoId = item.path("id").path("videoId").asText(null);
-                if (videoId != null && !videoId.isBlank()) {
-                    videoIds.add(videoId);
-                }
-            }
-        }
+        List<String> videoIds = extractVideoIds(searchResponse);
         if (videoIds.isEmpty()) {
             return List.of();
         }
         return fetchVideoDetails(videoIds);
     }
 
+    /** Sin visibilidad private para que YoutubeClientMappingTest la ejerza directamente con un DTO
+     * construido a mano, sin tener que levantar un servidor HTTP de mentira. */
+    static List<String> extractVideoIds(YoutubeSearchResponse searchResponse) {
+        List<String> videoIds = new ArrayList<>();
+        List<YoutubeSearchItem> items = searchResponse != null ? searchResponse.items() : null;
+        if (items == null) {
+            return videoIds;
+        }
+        for (YoutubeSearchItem item : items) {
+            String videoId = item.id() != null ? item.id().videoId() : null;
+            if (videoId != null && !videoId.isBlank()) {
+                videoIds.add(videoId);
+            }
+        }
+        return videoIds;
+    }
+
     /** videos.list trae lo que search.list no da: duración exacta, si es embebible de verdad y si
      * es una transmisión en vivo — search.list ya filtra por videoEmbeddable=true, pero esta
      * segunda consulta es la que realmente confirma esos datos antes de mostrarle algo al usuario. */
     private List<YoutubeSearchResult> fetchVideoDetails(List<String> videoIds) {
-        JsonNode response;
+        YoutubeVideosResponse response;
         try {
             response = restClient.get()
                     .uri(uriBuilder -> uriBuilder
@@ -165,60 +186,74 @@ public class YoutubeClient {
                             .queryParam("key", properties.getApiKey())
                             .build())
                     .retrieve()
-                    .body(JsonNode.class);
+                    .body(YoutubeVideosResponse.class);
+        } catch (HttpMessageConversionException e) {
+            throw mapJsonMappingError("videos.list", e);
         } catch (RestClientException e) {
             throw mapError("videos.list", e);
         }
 
         List<YoutubeSearchResult> results = new ArrayList<>();
-        if (response == null || !response.has("items")) {
+        List<YoutubeVideoItem> items = response != null ? response.items() : null;
+        if (items == null) {
             return results;
         }
-        for (JsonNode item : response.get("items")) {
-            String videoId = item.path("id").asText(null);
-            if (videoId == null || videoId.isBlank()) continue;
-
-            JsonNode snippet = item.path("snippet");
-            JsonNode status = item.path("status");
-            JsonNode contentDetails = item.path("contentDetails");
-
-            boolean embeddable = status.path("embeddable").asBoolean(false);
-            String privacyStatus = status.path("privacyStatus").asText("public");
-            String liveBroadcastContent = snippet.path("liveBroadcastContent").asText("none");
-            boolean isLive = !"none".equals(liveBroadcastContent) || item.has("liveStreamingDetails");
-
-            if (!embeddable || !"public".equals(privacyStatus)) {
-                continue; // privado, eliminado o no embebible — se descarta, no se muestra
+        for (YoutubeVideoItem item : items) {
+            YoutubeSearchResult mapped = toSearchResult(item);
+            if (mapped != null) {
+                results.add(mapped);
             }
-
-            Integer durationSeconds = parseIsoDuration(contentDetails.path("duration").asText(null));
-            String title = sanitizeTitle(snippet.path("title").asText(""));
-            String channelTitle = sanitizeTitle(snippet.path("channelTitle").asText(""));
-            String thumbnail = bestThumbnail(snippet.path("thumbnails"));
-
-            results.add(new YoutubeSearchResult(videoId, title, channelTitle, thumbnail, durationSeconds, true, isLive));
         }
         return results;
     }
 
-    private static String bestThumbnail(JsonNode thumbnails) {
-        for (String key : new String[] {"high", "medium", "default"}) {
-            if (thumbnails.has(key)) {
-                return thumbnails.get(key).path("url").asText(null);
-            }
+    /** Mapea un item de videos.list a YoutubeSearchResult, o null si hay que descartarlo (sin
+     * videoId, privado, eliminado o no embebible). Sin visibilidad private para que
+     * YoutubeClientMappingTest la ejerza directamente con DTOs construidos a mano — cubre los casos
+     * de snippet/status/contentDetails/thumbnails ausentes sin necesitar un servidor HTTP de mentira. */
+    static YoutubeSearchResult toSearchResult(YoutubeVideoItem item) {
+        String videoId = item.id();
+        if (videoId == null || videoId.isBlank()) return null;
+
+        YoutubeSnippet snippet = item.snippet();
+        YoutubeStatus status = item.status();
+        YoutubeContentDetails contentDetails = item.contentDetails();
+
+        boolean embeddable = status != null && status.embeddable();
+        String privacyStatus = status != null && status.privacyStatus() != null ? status.privacyStatus() : "public";
+        String liveBroadcastContent = snippet != null && snippet.liveBroadcastContent() != null
+                ? snippet.liveBroadcastContent() : "none";
+        boolean isLive = !"none".equals(liveBroadcastContent) || item.liveStreamingDetails() != null;
+
+        if (!embeddable || !"public".equals(privacyStatus)) {
+            return null; // privado, eliminado o no embebible — se descarta, no se muestra
         }
+
+        Integer durationSeconds = parseIsoDuration(contentDetails != null ? contentDetails.duration() : null);
+        String title = sanitizeTitle(snippet != null && snippet.title() != null ? snippet.title() : "");
+        String channelTitle = sanitizeTitle(snippet != null && snippet.channelTitle() != null ? snippet.channelTitle() : "");
+        String thumbnail = snippet != null ? bestThumbnail(snippet.thumbnails()) : null;
+
+        return new YoutubeSearchResult(videoId, title, channelTitle, thumbnail, durationSeconds, true, isLive);
+    }
+
+    static String bestThumbnail(YoutubeThumbnails thumbnails) {
+        if (thumbnails == null) return null;
+        if (thumbnails.high() != null) return thumbnails.high().url();
+        if (thumbnails.medium() != null) return thumbnails.medium().url();
+        if (thumbnails.defaultThumbnail() != null) return thumbnails.defaultThumbnail().url();
         return null;
     }
 
     /** Los títulos/canales de YouTube pueden traer HTML o caracteres de control — se muestran tal
      * cual (React ya escapa texto por defecto), pero se les quita cualquier etiqueta como defensa
      * en profundidad, igual que TextSanitizer para contenido generado por usuarios de Menzo. */
-    private static String sanitizeTitle(String raw) {
+    static String sanitizeTitle(String raw) {
         String cleaned = raw.replaceAll("<[^>]*>", "").trim();
         return cleaned.length() > 300 ? cleaned.substring(0, 300) : cleaned;
     }
 
-    private static Integer parseIsoDuration(String iso) {
+    static Integer parseIsoDuration(String iso) {
         if (iso == null || iso.isBlank()) return null;
         try {
             return (int) Duration.parse(iso).get(ChronoUnit.SECONDS);
@@ -227,7 +262,7 @@ public class YoutubeClient {
         }
     }
 
-    private static String extractVideoId(String query) {
+    static String extractVideoId(String query) {
         Matcher matcher = YOUTUBE_LINK.matcher(query);
         return matcher.find() ? matcher.group(1) : null;
     }
@@ -275,19 +310,29 @@ public class YoutubeClient {
      * solo (403 es tanto "cuota agotada" como "clave inválida/restringida"). Se parsea de forma
      * defensiva: si el cuerpo no es el JSON esperado, se sigue igual con reason=null en vez de
      * lanzar una excepción nueva mientras se está manejando una. */
-    private static String extractReason(RestClientResponseException responseException) {
+    static String extractReason(RestClientResponseException responseException) {
         try {
             String body = responseException.getResponseBodyAsString();
             if (body == null || body.isBlank()) return null;
-            JsonNode root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
-            JsonNode errors = root.path("error").path("errors");
-            if (errors.isArray() && !errors.isEmpty()) {
-                return errors.get(0).path("reason").asText(null);
+            YoutubeErrorResponse parsed = ERROR_BODY_MAPPER.readValue(body, YoutubeErrorResponse.class);
+            if (parsed.error() == null || parsed.error().errors() == null || parsed.error().errors().isEmpty()) {
+                return null;
             }
-            return null;
+            return parsed.error().errors().get(0).reason();
         } catch (Exception parseError) {
             return null;
         }
+    }
+
+    /** Antes esto se perdía dentro del catch genérico de MusicService y salía como
+     * YOUTUBE_UNAVAILABLE sin distinguirse de una falla real de red — un error de mapeo JSON es un
+     * bug interno (forma de DTO desalineada con lo que devuelve Google), no una falla de YouTube en
+     * sí, así que se loguea completo acá (nunca se expone al cliente) y se responde con un código
+     * propio para poder diferenciarlo en los logs de Render (ver sección 6 del pedido). */
+    private static ApiException mapJsonMappingError(String stage, HttpMessageConversionException e) {
+        log.error("Menzi DJ YouTube JSON mapping failed: stage={}, errorType={}", stage, e.getClass().getSimpleName(), e);
+        return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_JSON_MAPPING_ERROR",
+                "Ocurrió un error interno procesando la respuesta de YouTube.");
     }
 
     private static boolean isQuotaReason(String reason) {

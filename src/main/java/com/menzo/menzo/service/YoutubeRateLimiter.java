@@ -1,6 +1,7 @@
 package com.menzo.menzo.service;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
@@ -24,16 +25,22 @@ public class YoutubeRateLimiter {
     private final Map<UUID, Deque<Instant>> requestsByUser = new ConcurrentHashMap<>();
 
     public void checkAndRecord(UUID userId) {
-        Instant cutoff = Instant.now().minusSeconds(WINDOW_SECONDS);
+        Instant now = Instant.now();
+        Instant cutoff = now.minusSeconds(WINDOW_SECONDS);
         Deque<Instant> timestamps = requestsByUser.computeIfAbsent(userId, id -> new ArrayDeque<>());
         synchronized (timestamps) {
             while (!timestamps.isEmpty() && timestamps.peekFirst().isBefore(cutoff)) {
                 timestamps.pollFirst();
             }
             if (timestamps.size() >= MAX_REQUESTS) {
-                throw new TooManyRequestsException("Estás buscando demasiado rápido. Esperá unos segundos e intentá de nuevo.");
+                // El más viejo del deque es el próximo en salir de la ventana — recién ahí hay
+                // lugar para una búsqueda nueva, así que ese es el retryAfterSeconds real (no un
+                // número fijo adivinado) que se le manda al cliente (ver sección 5 del pedido).
+                long retryAfterSeconds = Math.max(1, WINDOW_SECONDS - ChronoUnit.SECONDS.between(timestamps.peekFirst(), now));
+                throw new TooManyRequestsException("MENZI_DJ_RATE_LIMITED",
+                        "Estás buscando demasiado rápido. Esperá unos segundos e intentá de nuevo.", (int) retryAfterSeconds);
             }
-            timestamps.addLast(Instant.now());
+            timestamps.addLast(now);
         }
     }
 }

@@ -24,8 +24,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ErrorResponse> handleApiException(ApiException ex, WebRequest request) {
-        return ResponseEntity.status(ex.getStatus())
-                .body(ErrorResponse.of(ex.getStatus().value(), ex.getCode(), ex.getStatus().getReasonPhrase(), ex.getMessage(), path(request)));
+        ErrorResponse body = ErrorResponse.of(ex.getStatus().value(), ex.getCode(), ex.getStatus().getReasonPhrase(),
+                ex.getMessage(), path(request), ex.getRetryAfterSeconds());
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
+        if (ex.getRetryAfterSeconds() != null) {
+            response = response.header("Retry-After", String.valueOf(ex.getRetryAfterSeconds()));
+        }
+        return response.body(body);
     }
 
     /** Respaldo de MusicService.expectedVersion: si dos coanfitriones controlan Menzi DJ casi al
