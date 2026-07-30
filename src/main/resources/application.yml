@@ -58,6 +58,13 @@ menzo:
     app-id: ${AGORA_APP_ID:}
     app-certificate: ${AGORA_APP_CERTIFICATE:}
 
+youtube:
+  # Única variable secreta de esta sección — se configura en Render como secreto, nunca en el repo.
+  api-key: ${YOUTUBE_API_KEY:}
+  region-code: ${YOUTUBE_REGION_CODE:MX}
+  relevance-language: ${YOUTUBE_RELEVANCE_LANGUAGE:es}
+  max-results: ${YOUTUBE_MAX_RESULTS:10}
+
 springdoc:
   swagger-ui:
     path: /docs

@@ -5,6 +5,7 @@ import java.util.Map;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -21,6 +22,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleApiException(ApiException ex, WebRequest request) {
         return ResponseEntity.status(ex.getStatus())
                 .body(ErrorResponse.of(ex.getStatus().value(), ex.getStatus().getReasonPhrase(), ex.getMessage(), path(request)));
+    }
+
+    /** Respaldo de MusicService.expectedVersion: si dos coanfitriones controlan Menzi DJ casi al
+     * mismo tiempo, Hibernate rechaza el segundo UPDATE por versión desactualizada (@Version en
+     * LiveMusicSession) — esto solo dispara si el chequeo explícito de expectedVersion no lo
+     * atajó antes, así que igual se traduce a 409 en vez de un 500 genérico. */
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ErrorResponse> handleOptimisticLock(ObjectOptimisticLockingFailureException ex, WebRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.of(
+                HttpStatus.CONFLICT.value(), "Conflict",
+                "Alguien más actualizó Menzi DJ justo ahora — volvé a intentar.", path(request)));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
