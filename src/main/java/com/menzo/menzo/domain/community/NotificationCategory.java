@@ -5,5 +5,6 @@ public enum NotificationCategory {
     likes,
     mensajes,
     eventos,
-    seguimientos
+    seguimientos,
+    en_vivo
 }

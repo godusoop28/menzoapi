@@ -32,6 +32,7 @@ public class CommunityService {
     private final CommunityEventRepository communityEventRepository;
     private final EventAttendeeRepository eventAttendeeRepository;
     private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
     private final UserRepository userRepository;
 
     public CommunityService(
@@ -39,11 +40,13 @@ public class CommunityService {
             CommunityEventRepository communityEventRepository,
             EventAttendeeRepository eventAttendeeRepository,
             NotificationRepository notificationRepository,
+            NotificationService notificationService,
             UserRepository userRepository) {
         this.communityConfigRepository = communityConfigRepository;
         this.communityEventRepository = communityEventRepository;
         this.eventAttendeeRepository = eventAttendeeRepository;
         this.notificationRepository = notificationRepository;
+        this.notificationService = notificationService;
         this.userRepository = userRepository;
     }
 
@@ -110,7 +113,7 @@ public class CommunityService {
     @Transactional(readOnly = true)
     public PageResponse<NotificationResponse> listNotifications(User me, Pageable pageable) {
         Page<Notification> page = notificationRepository.findByRecipientIdOrderByCreatedAtDesc(me.getId(), pageable);
-        return PageResponse.of(page, this::toNotificationResponse);
+        return PageResponse.of(page, notificationService::toResponse);
     }
 
     @Transactional
@@ -143,19 +146,5 @@ public class CommunityService {
                 event.getKind(),
                 attendeeCount,
                 attendingByMe);
-    }
-
-    private NotificationResponse toNotificationResponse(Notification notification) {
-        return new NotificationResponse(
-                notification.getId(),
-                notification.getCategory().name(),
-                notification.getTitle(),
-                notification.getBody(),
-                notification.getCreatedAt(),
-                notification.isRead(),
-                notification.getRelatedPost() != null ? notification.getRelatedPost().getId() : null,
-                notification.getRelatedRoom() != null ? notification.getRelatedRoom().getId() : null,
-                notification.getRelatedUser() != null ? notification.getRelatedUser().getId() : null,
-                notification.getRelatedEvent() != null ? notification.getRelatedEvent().getId() : null);
     }
 }

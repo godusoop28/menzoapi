@@ -19,6 +19,7 @@ import com.menzo.menzo.domain.chat.LiveParticipantStatus;
 import com.menzo.menzo.domain.chat.LiveSessionStatus;
 import com.menzo.menzo.domain.chat.RoomMember;
 import com.menzo.menzo.domain.chat.RoomRole;
+import com.menzo.menzo.domain.community.NotificationCategory;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
 import com.menzo.menzo.dto.live.LiveEvent;
@@ -69,6 +70,7 @@ public class LiveService {
     private final LiveParticipantRepository liveParticipantRepository;
     private final ProfileMapper profileMapper;
     private final SimpMessagingTemplate messagingTemplate;
+    private final NotificationService notificationService;
 
     public LiveService(
             AgoraProperties agoraProperties,
@@ -79,7 +81,8 @@ public class LiveService {
             ChatLiveSessionRepository chatLiveSessionRepository,
             LiveParticipantRepository liveParticipantRepository,
             ProfileMapper profileMapper,
-            SimpMessagingTemplate messagingTemplate) {
+            SimpMessagingTemplate messagingTemplate,
+            NotificationService notificationService) {
         this.agoraProperties = agoraProperties;
         this.chatRoomRepository = chatRoomRepository;
         this.roomMemberRepository = roomMemberRepository;
@@ -89,6 +92,7 @@ public class LiveService {
         this.liveParticipantRepository = liveParticipantRepository;
         this.profileMapper = profileMapper;
         this.messagingTemplate = messagingTemplate;
+        this.notificationService = notificationService;
     }
 
     @Transactional(readOnly = true)
@@ -120,7 +124,7 @@ public class LiveService {
 
     @Transactional
     public LiveSessionResponse startLive(User actor, UUID roomId, StartLiveRequest request) {
-        getRoomOrThrow(roomId);
+        ChatRoom room = getRoomOrThrow(roomId);
         RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
         if (chatLiveSessionRepository.findByRoomIdAndStatus(roomId, LiveSessionStatus.ACTIVE).isPresent()) {
             throw new ConflictException("Ya hay un LIVE activo en esta sala");
@@ -148,7 +152,26 @@ public class LiveService {
         liveParticipantRepository.save(host);
 
         publish(LiveEventType.CHAT_LIVE_STARTED, roomId, session.getId(), toSessionResponse(session, actor));
+        notifyLiveStarted(room, actor);
         return toSessionResponse(session, actor);
+    }
+
+    /** Notifica a los demás miembros de la sala (nunca al que lo inició) de que hay un LIVE
+     * activo — a diferencia de un mensaje de chat, iniciar un LIVE es un evento poco frecuente y
+     * de alta señal (como cuando Discord resalta un canal de voz que se activó), así que acá sí
+     * tiene sentido avisarle a toda la sala en vez de solo al destinatario directo de una DM. */
+    private void notifyLiveStarted(ChatRoom room, User actor) {
+        String roomName = room.getName() != null ? room.getName() : "una sala";
+        for (RoomMember member : roomMemberRepository.findByRoomId(room.getId())) {
+            if (member.getUserId().equals(actor.getId())) continue;
+            userRepository.findById(member.getUserId()).ifPresent(recipient ->
+                    notificationService.create(
+                            recipient,
+                            NotificationCategory.en_vivo,
+                            actor.getDisplayName() + " inició un LIVE",
+                            "Se está reproduciendo en " + roomName + " — entrá para escuchar.",
+                            null, room, actor, null));
+        }
     }
 
     @Transactional

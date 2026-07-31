@@ -14,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 import com.menzo.menzo.domain.chat.WallComment;
 import com.menzo.menzo.domain.chat.WallCommentLike;
 import com.menzo.menzo.domain.chat.WallMessage;
-import com.menzo.menzo.domain.community.Notification;
 import com.menzo.menzo.domain.community.NotificationCategory;
 import com.menzo.menzo.domain.user.Aura;
 import com.menzo.menzo.domain.user.Follow;
@@ -43,7 +42,6 @@ import com.menzo.menzo.exception.NotFoundException;
 import com.menzo.menzo.repository.chat.WallCommentLikeRepository;
 import com.menzo.menzo.repository.chat.WallCommentRepository;
 import com.menzo.menzo.repository.chat.WallMessageRepository;
-import com.menzo.menzo.repository.community.NotificationRepository;
 import com.menzo.menzo.repository.user.AuraRepository;
 import com.menzo.menzo.repository.user.BadgeRepository;
 import com.menzo.menzo.repository.user.FollowRepository;
@@ -65,7 +63,7 @@ public class UserService {
     private final FollowRepository followRepository;
     private final ProfileVisitRepository profileVisitRepository;
     private final UserSettingsRepository userSettingsRepository;
-    private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
     private final WallMessageRepository wallMessageRepository;
     private final WallCommentRepository wallCommentRepository;
     private final WallCommentLikeRepository wallCommentLikeRepository;
@@ -80,7 +78,7 @@ public class UserService {
             FollowRepository followRepository,
             ProfileVisitRepository profileVisitRepository,
             UserSettingsRepository userSettingsRepository,
-            NotificationRepository notificationRepository,
+            NotificationService notificationService,
             WallMessageRepository wallMessageRepository,
             WallCommentRepository wallCommentRepository,
             WallCommentLikeRepository wallCommentLikeRepository,
@@ -93,7 +91,7 @@ public class UserService {
         this.followRepository = followRepository;
         this.profileVisitRepository = profileVisitRepository;
         this.userSettingsRepository = userSettingsRepository;
-        this.notificationRepository = notificationRepository;
+        this.notificationService = notificationService;
         this.wallMessageRepository = wallMessageRepository;
         this.wallCommentRepository = wallCommentRepository;
         this.wallCommentLikeRepository = wallCommentLikeRepository;
@@ -156,12 +154,12 @@ public class UserService {
     }
 
     private void sendWelcomeNotification(User user) {
-        Notification notification = new Notification();
-        notification.setRecipient(user);
-        notification.setCategory(NotificationCategory.seguimientos);
-        notification.setTitle("¡Bienvenido a Menzo, " + user.getDisplayName() + "!");
-        notification.setBody("Tu perfil ya está listo. Explorá salas y empezá a conectar.");
-        notificationRepository.save(notification);
+        notificationService.create(
+                user,
+                NotificationCategory.seguimientos,
+                "¡Bienvenido a Menzo, " + user.getDisplayName() + "!",
+                "Tu perfil ya está listo. Explorá salas y empezá a conectar.",
+                null, null, null, null);
     }
 
     @Transactional
@@ -229,15 +227,13 @@ public class UserService {
         if (!followRepository.existsByFollowerIdAndFollowingId(me.getId(), targetId)) {
             followRepository.save(new Follow(me.getId(), targetId));
 
-            userRepository.findById(targetId).ifPresent(target -> {
-                Notification notification = new Notification();
-                notification.setRecipient(target);
-                notification.setCategory(NotificationCategory.seguimientos);
-                notification.setTitle(me.getDisplayName() + " empezó a seguirte");
-                notification.setBody("Revisa su perfil y descubre qué tienen en común.");
-                notification.setRelatedUser(me);
-                notificationRepository.save(notification);
-            });
+            userRepository.findById(targetId).ifPresent(target ->
+                    notificationService.create(
+                            target,
+                            NotificationCategory.seguimientos,
+                            me.getDisplayName() + " empezó a seguirte",
+                            "Revisa su perfil y descubre qué tienen en común.",
+                            null, null, me, null));
         }
     }
 
@@ -408,26 +404,24 @@ public class UserService {
     private void notifyWallComment(User commenter, WallMessage wallMessage, WallComment parentComment) {
         User postAuthor = wallMessage.getAuthor();
         if (!postAuthor.getId().equals(commenter.getId())) {
-            Notification notification = new Notification();
-            notification.setRecipient(postAuthor);
-            notification.setCategory(NotificationCategory.comentarios);
-            notification.setTitle(commenter.getDisplayName() + " comentó en tu muro");
-            notification.setBody("Revisa qué te escribió.");
-            notification.setRelatedUser(commenter);
-            notificationRepository.save(notification);
+            notificationService.create(
+                    postAuthor,
+                    NotificationCategory.comentarios,
+                    commenter.getDisplayName() + " comentó en tu muro",
+                    "Revisa qué te escribió.",
+                    null, null, commenter, null);
         }
 
         if (parentComment != null) {
             User parentAuthor = parentComment.getAuthor();
             boolean alreadyNotified = parentAuthor.getId().equals(postAuthor.getId());
             if (!parentAuthor.getId().equals(commenter.getId()) && !alreadyNotified) {
-                Notification notification = new Notification();
-                notification.setRecipient(parentAuthor);
-                notification.setCategory(NotificationCategory.comentarios);
-                notification.setTitle(commenter.getDisplayName() + " respondió tu comentario");
-                notification.setBody("Revisa qué te escribió.");
-                notification.setRelatedUser(commenter);
-                notificationRepository.save(notification);
+                notificationService.create(
+                        parentAuthor,
+                        NotificationCategory.comentarios,
+                        commenter.getDisplayName() + " respondió tu comentario",
+                        "Revisa qué te escribió.",
+                        null, null, commenter, null);
             }
         }
     }

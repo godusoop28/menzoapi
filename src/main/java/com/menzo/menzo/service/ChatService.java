@@ -23,6 +23,7 @@ import com.menzo.menzo.domain.chat.RoomFavorite;
 import com.menzo.menzo.domain.chat.RoomMember;
 import com.menzo.menzo.domain.chat.RoomRole;
 import com.menzo.menzo.domain.chat.RoomType;
+import com.menzo.menzo.domain.community.NotificationCategory;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.dto.chat.BanResponse;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
@@ -63,6 +64,7 @@ public class ChatService {
     private final SimpMessagingTemplate messagingTemplate;
     private final VoiceService voiceService;
     private final LiveService liveService;
+    private final NotificationService notificationService;
 
     public ChatService(
             ChatRoomRepository chatRoomRepository,
@@ -74,7 +76,8 @@ public class ChatService {
             ProfileMapper profileMapper,
             SimpMessagingTemplate messagingTemplate,
             VoiceService voiceService,
-            LiveService liveService) {
+            LiveService liveService,
+            NotificationService notificationService) {
         this.chatRoomRepository = chatRoomRepository;
         this.roomMemberRepository = roomMemberRepository;
         this.roomFavoriteRepository = roomFavoriteRepository;
@@ -85,6 +88,7 @@ public class ChatService {
         this.messagingTemplate = messagingTemplate;
         this.voiceService = voiceService;
         this.liveService = liveService;
+        this.notificationService = notificationService;
     }
 
     /** Solo las salas a las que el usuario ya se unió (públicas o directas) — "Mis chats". */
@@ -396,7 +400,29 @@ public class ChatService {
 
         MessageResponse response = toMessageResponse(message);
         broadcastMessage(roomId, response);
+        if (room.getType() == RoomType.DIRECT) {
+            notifyDirectMessage(room, me, message);
+        }
         return response;
+    }
+
+    /** Solo para conversaciones DIRECT (1 a 1) — un mensaje en una sala pública notificaría a
+     * potencialmente decenas de miembros por cada línea escrita, algo que ninguna app de chat
+     * real hace por defecto. Acá el destinatario es inequívoco: el otro miembro de la sala. */
+    private void notifyDirectMessage(ChatRoom room, User sender, Message message) {
+        List<RoomMember> members = roomMemberRepository.findByRoomId(room.getId());
+        for (RoomMember member : members) {
+            if (member.getUserId().equals(sender.getId())) continue;
+            userRepository.findById(member.getUserId()).ifPresent(recipient ->
+                    notificationService.create(
+                            recipient,
+                            NotificationCategory.mensajes,
+                            sender.getDisplayName() + " te escribió",
+                            message.getBody() == null || message.getBody().isBlank()
+                                    ? "Envió una imagen."
+                                    : truncate(message.getBody()),
+                            null, room, sender, null));
+        }
     }
 
     @Transactional(readOnly = true)
@@ -678,5 +704,10 @@ public class ChatService {
      * de confiar en que el ObjectMapper serialice Instant así globalmente (ver JacksonConfig). */
     private static String formatInstant(Instant instant) {
         return DateTimeFormatter.ISO_INSTANT.format(instant.truncatedTo(ChronoUnit.MILLIS));
+    }
+
+    private static String truncate(String text) {
+        if (text == null) return "";
+        return text.length() > 140 ? text.substring(0, 140) + "…" : text;
     }
 }

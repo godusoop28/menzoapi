@@ -12,7 +12,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.menzo.menzo.domain.community.CommunityEvent;
-import com.menzo.menzo.domain.community.Notification;
 import com.menzo.menzo.domain.community.NotificationCategory;
 import com.menzo.menzo.domain.post.Comment;
 import com.menzo.menzo.domain.post.PollOption;
@@ -33,7 +32,6 @@ import com.menzo.menzo.exception.BadRequestException;
 import com.menzo.menzo.exception.ForbiddenException;
 import com.menzo.menzo.exception.NotFoundException;
 import com.menzo.menzo.repository.community.CommunityEventRepository;
-import com.menzo.menzo.repository.community.NotificationRepository;
 import com.menzo.menzo.repository.post.CommentRepository;
 import com.menzo.menzo.repository.post.PollOptionRepository;
 import com.menzo.menzo.repository.post.PollVoteRepository;
@@ -56,7 +54,7 @@ public class PostService {
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
     private final CommunityEventRepository communityEventRepository;
-    private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
     private final ProfileMapper profileMapper;
 
     public PostService(
@@ -68,7 +66,7 @@ public class PostService {
             CommentRepository commentRepository,
             UserRepository userRepository,
             CommunityEventRepository communityEventRepository,
-            NotificationRepository notificationRepository,
+            NotificationService notificationService,
             ProfileMapper profileMapper) {
         this.postRepository = postRepository;
         this.pollOptionRepository = pollOptionRepository;
@@ -78,7 +76,7 @@ public class PostService {
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
         this.communityEventRepository = communityEventRepository;
-        this.notificationRepository = notificationRepository;
+        this.notificationService = notificationService;
         this.profileMapper = profileMapper;
     }
 
@@ -181,13 +179,12 @@ public class PostService {
         postLikeRepository.save(new PostLike(postId, me.getId()));
 
         if (!post.getAuthor().getId().equals(me.getId())) {
-            Notification notification = new Notification();
-            notification.setRecipient(post.getAuthor());
-            notification.setCategory(NotificationCategory.likes);
-            notification.setTitle(me.getDisplayName() + " le dio like a tu publicación");
-            notification.setBody(truncate(post.getBody()));
-            notification.setRelatedPost(post);
-            notificationRepository.save(notification);
+            notificationService.create(
+                    post.getAuthor(),
+                    NotificationCategory.likes,
+                    me.getDisplayName() + " le dio like a tu publicación",
+                    truncate(post.getBody()),
+                    post, null, null, null);
         }
     }
 
@@ -244,13 +241,12 @@ public class PostService {
         postRepository.save(post);
 
         if (!post.getAuthor().getId().equals(me.getId())) {
-            Notification notification = new Notification();
-            notification.setRecipient(post.getAuthor());
-            notification.setCategory(NotificationCategory.comentarios);
-            notification.setTitle(me.getDisplayName() + " comentó tu publicación");
-            notification.setBody(truncate(request.body()));
-            notification.setRelatedPost(post);
-            notificationRepository.save(notification);
+            notificationService.create(
+                    post.getAuthor(),
+                    NotificationCategory.comentarios,
+                    me.getDisplayName() + " comentó tu publicación",
+                    truncate(request.body()),
+                    post, null, null, null);
         }
 
         return toCommentResponse(comment);
