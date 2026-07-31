@@ -288,6 +288,31 @@ public class LiveService {
                 agoraProperties.getAppId(), session.getAgoraChannelName(), token, uid, canPublish ? "PUBLISHER" : "SUBSCRIBER");
     }
 
+    /** Sin esto, una sesión ACTIVE que no tenga un join/leave/moderación de por medio se queda
+     * con `lastHeartbeatAt` viejo para siempre — y VoiceService.liveRoomIds()/isLive() (que
+     * corren en CUALQUIER lectura del directorio de salas, listados, carrusel de "en vivo",
+     * etc.) barren como ENDED cualquier sesión ACTIVE cuyo heartbeat pasó de 30s
+     * (LIVE_HEARTBEAT_TTL_SECONDS), sin importar que siga genuinamente en uso. El diseño viejo
+     * (VoiceService, /voice/*) resolvía esto porque el cliente hacía polling de participants()
+     * cada 5s; el flujo nuevo (/live/*) nunca heredó un mecanismo equivalente, así que un LIVE
+     * que durara más de 30s sin que alguien se uniera o se fuera se auto-terminaba en silencio
+     * — apenas alguien (el propio dueño, tras esperar y escribir una búsqueda en Menzi DJ, o
+     * cualquier otro cliente refrescando la lista de salas) volvía a leer el estado. Ver
+     * LiveNotifier._startHeartbeat en el cliente Flutter, que llama a esto cada 15s mientras
+     * hay un LIVE activo.
+     */
+    @Transactional
+    public void heartbeat(User me, UUID roomId) {
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        liveParticipantRepository.findByLiveSessionIdAndUserId(session.getId(), me.getId())
+                .ifPresent(participant -> {
+                    participant.setLastSeenAt(Instant.now());
+                    liveParticipantRepository.save(participant);
+                });
+        session.setLastHeartbeatAt(Instant.now());
+        chatLiveSessionRepository.save(session);
+    }
+
     @Transactional(readOnly = true)
     public List<LiveParticipantResponse> listParticipants(UUID roomId) {
         ChatLiveSession session = getActiveSessionOrThrow(roomId);

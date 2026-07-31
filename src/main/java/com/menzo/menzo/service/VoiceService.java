@@ -33,16 +33,20 @@ import com.menzo.menzo.service.mapper.ProfileMapper;
  * conectado ESTE instante) que no tiene sentido persistir tick a tick. Pero el DIRECTORIO de
  * "qué salas están en vivo" (para listados/carrusel) sí se persiste en chat_live_sessions,
  * porque el mapa en memoria se pierde en cada restart/deploy y no funcionaría con más de una
- * instancia de Render. lastHeartbeatAt se toca en cada join/leave/participants — como los
- * clientes ya hacen polling de participants() cada 5s mientras están en la sala, eso alcanza
- * como heartbeat sin agregar un endpoint nuevo; una sesión ACTIVE cuyo heartbeat se puso viejo
- * (proceso reiniciado, cliente caído sin avisar) deja de contar como "en vivo" sola.
+ * instancia de Render. lastHeartbeatAt se toca en cada join/leave/participants de este flujo
+ * viejo (los clientes que todavía usan /voice/* hacen polling de participants() cada 5s, que
+ * alcanza como heartbeat) — el flujo nuevo (/live/*, ver LiveService) tiene su propio endpoint
+ * de heartbeat dedicado, llamado por el cliente cada 15s mientras hay un LIVE activo. Una
+ * sesión ACTIVE cuyo heartbeat se puso viejo (proceso reiniciado, cliente caído sin avisar, o
+ * simplemente sin heartbeat) deja de contar como "en vivo" sola.
  */
 @Service
 public class VoiceService {
 
     private static final int TOKEN_EXPIRE_SECONDS = 3600;
-    private static final long LIVE_HEARTBEAT_TTL_SECONDS = 30;
+    // 3x el intervalo de heartbeat de LiveNotifier (15s) — suficiente margen para tolerar un
+    // tick perdido por una red lenta sin que la sesión se dé por terminada de más.
+    private static final long LIVE_HEARTBEAT_TTL_SECONDS = 45;
 
     private final AgoraProperties agoraProperties;
     private final ChatRoomRepository chatRoomRepository;

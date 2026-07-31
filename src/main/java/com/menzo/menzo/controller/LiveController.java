@@ -78,6 +78,12 @@ public class LiveController {
         liveService.leaveLive(me, id);
     }
 
+    @PostMapping("/heartbeat")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void heartbeat(@PathVariable UUID id, @AuthenticationPrincipal User me) {
+        liveService.heartbeat(me, id);
+    }
+
     @GetMapping("/token")
     public LiveTokenResponse token(@PathVariable UUID id, @AuthenticationPrincipal User me) {
         return liveService.getToken(me, id);
