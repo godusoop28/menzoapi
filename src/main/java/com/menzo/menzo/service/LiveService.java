@@ -6,7 +6,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
-import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -70,7 +70,7 @@ public class LiveService {
     private final ChatLiveSessionRepository chatLiveSessionRepository;
     private final LiveParticipantRepository liveParticipantRepository;
     private final ProfileMapper profileMapper;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final ApplicationEventPublisher eventPublisher;
     private final NotificationService notificationService;
 
     public LiveService(
@@ -82,7 +82,7 @@ public class LiveService {
             ChatLiveSessionRepository chatLiveSessionRepository,
             LiveParticipantRepository liveParticipantRepository,
             ProfileMapper profileMapper,
-            SimpMessagingTemplate messagingTemplate,
+            ApplicationEventPublisher eventPublisher,
             NotificationService notificationService) {
         this.agoraProperties = agoraProperties;
         this.chatRoomRepository = chatRoomRepository;
@@ -92,7 +92,7 @@ public class LiveService {
         this.chatLiveSessionRepository = chatLiveSessionRepository;
         this.liveParticipantRepository = liveParticipantRepository;
         this.profileMapper = profileMapper;
-        this.messagingTemplate = messagingTemplate;
+        this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
     }
 
@@ -149,7 +149,12 @@ public class LiveService {
         host.setRoomId(roomId);
         host.setUserId(actor.getId());
         host.setRole(actorRole == RoomRole.OWNER ? LiveParticipantRole.HOST : LiveParticipantRole.CO_HOST);
-        host.setMicrophoneEnabled(true);
+        // false, no true: el cliente (ver LiveNotifier._publishMic en Flutter) siempre publica
+        // el audio ya silenciado por defecto y recién confirma acá con setMicrophone(true) si el
+        // usuario lo activa — con esto en true, cualquier otro participante veía la insignia del
+        // anfitrión como "con micrófono" mientras Agora lo tenía mudo de verdad, hasta que tocara
+        // el botón dos veces (ver el fix del doble-toque en toggleMute).
+        host.setMicrophoneEnabled(false);
         liveParticipantRepository.save(host);
 
         publish(LiveEventType.CHAT_LIVE_STARTED, roomId, session.getId(), toSessionResponse(session, actor));
@@ -588,7 +593,12 @@ public class LiveService {
                 participant.getJoinedAt());
     }
 
+    /** Publica un evento de dominio, no el mensaje STOMP directo — ver {@link LiveEventRelay},
+     * que lo recoge con @TransactionalEventListener(AFTER_COMMIT). Mismo fix que
+     * MusicService.publish (ver comentario ahí): FORCE_MUTE/KICK/DEMOTED/LIVE_ENDED, etc.
+     * saliendo antes del commit tenían el mismo riesgo de que el cliente destino reaccionara (o
+     * hiciera un GET) contra un estado que Postgres todavía no había confirmado. */
     private void publish(LiveEventType type, UUID roomId, UUID liveSessionId, Object payload) {
-        messagingTemplate.convertAndSend("/topic/rooms/" + roomId + "/live", LiveEvent.of(type, roomId, liveSessionId, payload));
+        eventPublisher.publishEvent(LiveEvent.of(type, roomId, liveSessionId, payload));
     }
 }
