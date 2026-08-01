@@ -10,8 +10,8 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -70,7 +70,7 @@ public class MusicService {
     private final UserRepository userRepository;
     private final ProfileMapper profileMapper;
     private final YoutubeClient youtubeClient;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final ApplicationEventPublisher eventPublisher;
 
     public MusicService(
             ChatLiveSessionRepository chatLiveSessionRepository,
@@ -80,7 +80,7 @@ public class MusicService {
             UserRepository userRepository,
             ProfileMapper profileMapper,
             YoutubeClient youtubeClient,
-            SimpMessagingTemplate messagingTemplate) {
+            ApplicationEventPublisher eventPublisher) {
         this.chatLiveSessionRepository = chatLiveSessionRepository;
         this.musicSessionRepository = musicSessionRepository;
         this.queueItemRepository = queueItemRepository;
@@ -88,7 +88,7 @@ public class MusicService {
         this.userRepository = userRepository;
         this.profileMapper = profileMapper;
         this.youtubeClient = youtubeClient;
-        this.messagingTemplate = messagingTemplate;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -155,7 +155,7 @@ public class MusicService {
 
         if (playNow) {
             startPlaying(session, item, actor.getId());
-            session = musicSessionRepository.save(session);
+            session = musicSessionRepository.saveAndFlush(session);
             publish(MusicEventType.LIVE_MUSIC_TRACK_ADDED, session, toQueueItemResponse(item));
             publish(MusicEventType.LIVE_MUSIC_STARTED, session, toSnapshot(session));
         } else {
@@ -222,7 +222,7 @@ public class MusicService {
             session.setPausedAt(null);
             session.setStatus(MusicSessionStatus.PLAYING);
             session.setControlledByUserId(actor.getId());
-            session = musicSessionRepository.save(session);
+            session = musicSessionRepository.saveAndFlush(session);
             publish(MusicEventType.LIVE_MUSIC_RESUMED, session, toSnapshot(session));
             return toSnapshot(session);
         }
@@ -235,7 +235,7 @@ public class MusicService {
                 .findFirstByMusicSessionIdAndStatusOrderByPositionAsc(session.getId(), QueueItemStatus.QUEUED)
                 .orElseThrow(() -> new BadRequestException("La cola está vacía."));
         startPlaying(session, next, actor.getId());
-        session = musicSessionRepository.save(session);
+        session = musicSessionRepository.saveAndFlush(session);
         publish(MusicEventType.LIVE_MUSIC_STARTED, session, toSnapshot(session));
         return toSnapshot(session);
     }
@@ -252,7 +252,7 @@ public class MusicService {
         session.setPausedAt(Instant.now());
         session.setStatus(MusicSessionStatus.PAUSED);
         session.setControlledByUserId(actor.getId());
-        session = musicSessionRepository.save(session);
+        session = musicSessionRepository.saveAndFlush(session);
         publish(MusicEventType.LIVE_MUSIC_PAUSED, session, toSnapshot(session));
         return toSnapshot(session);
     }
@@ -279,7 +279,7 @@ public class MusicService {
             session.setPlaybackStartedAt(Instant.now());
         }
         session.setControlledByUserId(actor.getId());
-        session = musicSessionRepository.save(session);
+        session = musicSessionRepository.saveAndFlush(session);
         publish(MusicEventType.LIVE_MUSIC_SEEKED, session, toSnapshot(session));
         return toSnapshot(session);
     }
@@ -301,7 +301,7 @@ public class MusicService {
             session.setStatus(MusicSessionStatus.STOPPED);
         }
         session.setControlledByUserId(actor.getId());
-        session = musicSessionRepository.save(session);
+        session = musicSessionRepository.saveAndFlush(session);
         publish(MusicEventType.LIVE_MUSIC_SKIPPED, session, toSnapshot(session));
         return toSnapshot(session);
     }
@@ -315,7 +315,7 @@ public class MusicService {
         clearCurrent(session);
         session.setStatus(MusicSessionStatus.STOPPED);
         session.setControlledByUserId(actor.getId());
-        session = musicSessionRepository.save(session);
+        session = musicSessionRepository.saveAndFlush(session);
         publish(MusicEventType.LIVE_MUSIC_STOPPED, session, toSnapshot(session));
         return toSnapshot(session);
     }
@@ -327,7 +327,7 @@ public class MusicService {
         if (request.allowRequests() != null) {
             session.setAllowRequests(request.allowRequests());
         }
-        session = musicSessionRepository.save(session);
+        session = musicSessionRepository.saveAndFlush(session);
         publish(MusicEventType.LIVE_MUSIC_SETTINGS_UPDATED, session, toSnapshot(session));
         return toSnapshot(session);
     }
@@ -352,7 +352,7 @@ public class MusicService {
             item.setPosition(position++);
             queueItemRepository.save(item);
         }
-        session = musicSessionRepository.save(session);
+        session = musicSessionRepository.saveAndFlush(session);
         publish(MusicEventType.LIVE_MUSIC_QUEUE_UPDATED, session, null);
         return toSnapshot(session);
     }
@@ -407,7 +407,7 @@ public class MusicService {
             clearCurrent(session);
             session.setStatus(MusicSessionStatus.STOPPED);
         }
-        session = musicSessionRepository.save(session);
+        session = musicSessionRepository.saveAndFlush(session);
         publish(MusicEventType.LIVE_MUSIC_TRACK_CHANGED, session, toSnapshot(session));
     }
 
@@ -557,9 +557,18 @@ public class MusicService {
         return membership.getRole();
     }
 
+    /** Publica un evento de dominio (Spring ApplicationEvent), nunca el mensaje STOMP directo.
+     * {@link MusicEventRelay} lo recoge con @TransactionalEventListener(AFTER_COMMIT): si este
+     * método corriera messagingTemplate.convertAndSend acá adentro, otro dispositivo podría recibir
+     * el WebSocket, hacer un GET de reconciliación y llegar antes de que el commit de esta
+     * transacción sea visible — vería el estado viejo (por eso "solo el anfitrión escuchaba": su
+     * propia respuesta REST sí reflejaba el cambio porque lo escribió él mismo, pero los demás
+     * consultaban desde otra conexión/transacción que aún no veía el commit). El snapshot se arma
+     * ahora, con los valores ya aplicados en memoria — session/item vienen de un saveAndFlush, así
+     * que version/id ya son los finales; si la transacción hace rollback después, el evento nunca
+     * se entrega porque el listener AFTER_COMMIT simplemente no se dispara. */
     private void publish(MusicEventType type, LiveMusicSession session, Object payload) {
-        messagingTemplate.convertAndSend(
-                "/topic/rooms/" + session.getRoomId() + "/music",
+        eventPublisher.publishEvent(
                 MusicEvent.of(type, session.getRoomId(), session.getLiveSessionId(), session.getId(), session.getVersion(), payload));
     }
 
