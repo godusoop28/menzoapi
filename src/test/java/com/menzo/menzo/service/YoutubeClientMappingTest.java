@@ -104,7 +104,7 @@ class YoutubeClientMappingTest {
         YoutubeVideosResponse response = MAPPER.readValue(json, YoutubeVideosResponse.class);
         assertThat(response.items()).hasSize(1);
 
-        var result = YoutubeClient.toSearchResult(response.items().get(0));
+        var result = YoutubeClient.toSearchResult(response.items().get(0), "MX");
         assertThat(result).isNotNull();
         assertThat(result.videoId()).isEqualTo("dQw4w9WgXcQ");
         assertThat(result.title()).isEqualTo("Rick Astley - Never Gonna Give You Up");
@@ -123,8 +123,46 @@ class YoutubeClientMappingTest {
         String privado = """
                 {"id": "abc", "status": {"embeddable": true, "privacyStatus": "private"}}
                 """;
-        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(noEmbeddable, YoutubeVideoItem.class))).isNull();
-        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(privado, YoutubeVideoItem.class))).isNull();
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(noEmbeddable, YoutubeVideoItem.class), "MX")).isNull();
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(privado, YoutubeVideoItem.class), "MX")).isNull();
+    }
+
+    // ---- 2b. contentDetails.regionRestriction ---------------------------------------------------
+
+    @Test
+    void videoBloqueadoPorListaNegraEnLaRegionConfigurada_seDescarta() throws IOException {
+        String json = """
+                {"id": "abc", "status": {"embeddable": true, "privacyStatus": "public"},
+                 "contentDetails": {"regionRestriction": {"blocked": ["MX", "AR"]}}}
+                """;
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(json, YoutubeVideoItem.class), "MX")).isNull();
+    }
+
+    @Test
+    void videoConListaBlancaSinLaRegionConfigurada_seDescarta() throws IOException {
+        String json = """
+                {"id": "abc", "status": {"embeddable": true, "privacyStatus": "public"},
+                 "contentDetails": {"regionRestriction": {"allowed": ["US", "CA"]}}}
+                """;
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(json, YoutubeVideoItem.class), "MX")).isNull();
+    }
+
+    @Test
+    void videoConListaBlancaQueIncluyeLaRegionConfigurada_noSeDescarta() throws IOException {
+        String json = """
+                {"id": "abc", "status": {"embeddable": true, "privacyStatus": "public"},
+                 "contentDetails": {"regionRestriction": {"allowed": ["US", "MX"]}}}
+                """;
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(json, YoutubeVideoItem.class), "MX")).isNotNull();
+    }
+
+    @Test
+    void sinRegionRestriction_noSeDescartaPorRegion() throws IOException {
+        String json = """
+                {"id": "abc", "status": {"embeddable": true, "privacyStatus": "public"},
+                 "contentDetails": {"duration": "PT1M"}}
+                """;
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(json, YoutubeVideoItem.class), "MX")).isNotNull();
     }
 
     @Test
@@ -137,8 +175,8 @@ class YoutubeClientMappingTest {
                 {"id": "abc", "status": {"embeddable": true, "privacyStatus": "public"},
                  "liveStreamingDetails": {"actualStartTime": "2026-01-01T00:00:00Z"}}
                 """;
-        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(porLiveBroadcastContent, YoutubeVideoItem.class)).live()).isTrue();
-        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(porLiveStreamingDetails, YoutubeVideoItem.class)).live()).isTrue();
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(porLiveBroadcastContent, YoutubeVideoItem.class), "MX").live()).isTrue();
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(porLiveStreamingDetails, YoutubeVideoItem.class), "MX").live()).isTrue();
     }
 
     // ---- 3. URL directa de YouTube --------------------------------------------------------------
@@ -198,7 +236,7 @@ class YoutubeClientMappingTest {
 
         String json = "{\"id\": \"abc\", \"status\": {\"embeddable\": true, \"privacyStatus\": \"public\"}, "
                 + "\"snippet\": {\"title\": \"sin miniatura\"}}";
-        var result = YoutubeClient.toSearchResult(MAPPER.readValue(json, YoutubeVideoItem.class));
+        var result = YoutubeClient.toSearchResult(MAPPER.readValue(json, YoutubeVideoItem.class), "MX");
         assertThat(result).isNotNull();
         assertThat(result.thumbnailUrl()).isNull();
     }
@@ -208,7 +246,7 @@ class YoutubeClientMappingTest {
     @Test
     void contentDetailsAusente_duracionQuedaNullSinLanzar() throws IOException {
         String json = "{\"id\": \"abc\", \"status\": {\"embeddable\": true, \"privacyStatus\": \"public\"}}";
-        var result = YoutubeClient.toSearchResult(MAPPER.readValue(json, YoutubeVideoItem.class));
+        var result = YoutubeClient.toSearchResult(MAPPER.readValue(json, YoutubeVideoItem.class), "MX");
         assertThat(result).isNotNull();
         assertThat(result.durationSeconds()).isNull();
     }
@@ -216,7 +254,7 @@ class YoutubeClientMappingTest {
     @Test
     void statusOSnippetAusente_noLanzaYSeManejaComoNoEmbebible() throws IOException {
         String sinStatus = "{\"id\": \"abc\"}";
-        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(sinStatus, YoutubeVideoItem.class))).isNull();
+        assertThat(YoutubeClient.toSearchResult(MAPPER.readValue(sinStatus, YoutubeVideoItem.class), "MX")).isNull();
     }
 
     // ---- 8. respuesta de error de Google (quotaExceeded) ----------------------------------------

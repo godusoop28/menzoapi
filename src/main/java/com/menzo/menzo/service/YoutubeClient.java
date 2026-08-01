@@ -199,7 +199,7 @@ public class YoutubeClient {
             return results;
         }
         for (YoutubeVideoItem item : items) {
-            YoutubeSearchResult mapped = toSearchResult(item);
+            YoutubeSearchResult mapped = toSearchResult(item, properties.getRegionCode());
             if (mapped != null) {
                 results.add(mapped);
             }
@@ -208,10 +208,11 @@ public class YoutubeClient {
     }
 
     /** Mapea un item de videos.list a YoutubeSearchResult, o null si hay que descartarlo (sin
-     * videoId, privado, eliminado o no embebible). Sin visibilidad private para que
-     * YoutubeClientMappingTest la ejerza directamente con DTOs construidos a mano — cubre los casos
-     * de snippet/status/contentDetails/thumbnails ausentes sin necesitar un servidor HTTP de mentira. */
-    static YoutubeSearchResult toSearchResult(YoutubeVideoItem item) {
+     * videoId, privado, eliminado, no embebible, o bloqueado por región para `regionCode`). Sin
+     * visibilidad private para que YoutubeClientMappingTest la ejerza directamente con DTOs
+     * construidos a mano — cubre los casos de snippet/status/contentDetails/thumbnails ausentes sin
+     * necesitar un servidor HTTP de mentira. */
+    static YoutubeSearchResult toSearchResult(YoutubeVideoItem item, String regionCode) {
         String videoId = item.id();
         if (videoId == null || videoId.isBlank()) return null;
 
@@ -227,6 +228,14 @@ public class YoutubeClient {
 
         if (!embeddable || !"public".equals(privacyStatus)) {
             return null; // privado, eliminado o no embebible — se descarta, no se muestra
+        }
+        YoutubeRegionRestriction regionRestriction = contentDetails != null ? contentDetails.regionRestriction() : null;
+        if (regionRestriction != null && regionRestriction.blocksRegion(regionCode)) {
+            // Bloqueado por licencia regional para la región configurada del backend (ver
+            // YoutubeRegionRestriction) — mismo tratamiento que no-embebible: no se muestra ni se
+            // deja agregar. No es una garantía completa (el país real de cada dispositivo puede
+            // diferir del configurado acá), pero evita ofrecer algo que YA sabemos bloqueado.
+            return null;
         }
 
         Integer durationSeconds = parseIsoDuration(contentDetails != null ? contentDetails.duration() : null);
