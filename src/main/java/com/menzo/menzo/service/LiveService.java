@@ -47,12 +47,12 @@ import com.menzo.menzo.util.TextSanitizer;
 
 /**
  * Sistema LIVE moderado: quién puede iniciar/terminar, quién es HOST/CO_HOST/SPEAKER/AUDIENCE,
- * solicitudes para hablar, y qué rol de Agora (publisher/subscriber) recibe cada quien. Vive
- * aparte de VoiceService a propósito: VoiceService y sus endpoints /voice/* siguen intactos
- * porque la app móvil (menzomovil) todavía los usa tal cual (cualquier miembro = publisher) y
- * esta fase no toca móvil. Ambos comparten la misma tabla chat_live_sessions (una sesión ACTIVE
- * por sala) para que "¿esta sala está en vivo?" siga siendo una sola fuente de verdad — ver
- * ChatService.toRoomResponse / VoiceService.isLive.
+ * solicitudes para hablar, y qué rol de Agora (publisher/subscriber) recibe cada quien. Única
+ * autoridad real sobre join/leave/roles/mute — el flujo viejo (VoiceController, "cualquier
+ * miembro = publisher") se retiró por completo tras verificar que ni menzomovil ni menzoweb lo
+ * llamaban más (ver el comentario de clase en VoiceService). Ese servicio se redujo a
+ * isLive()/liveRoomIds(), solo lectura, sobre chat_live_sessions — la misma tabla que esta clase
+ * escribe, para que "¿esta sala está en vivo?" siga siendo una sola fuente de verdad.
  */
 @Service
 public class LiveService {

@@ -17,8 +17,9 @@ import lombok.Setter;
 
 /**
  * Una fila por (liveSessionId, userId) — persiste el rol/estado real de cada participante del
- * LIVE (a diferencia del mapa en memoria de VoiceService, que solo sabe "quién está conectado
- * ahora" para el flujo viejo /voice/* usado por la app móvil). roomId está denormalizado para
+ * LIVE. Única fuente de verdad de participantes: el mapa en memoria que tenía VoiceService para
+ * esto se retiró (ver comentario de clase en VoiceService — ningún cliente actual lo usaba).
+ * roomId está denormalizado para
  * poder consultar "mis participaciones en esta sala" sin tener que joinear con
  * chat_live_sessions primero.
  */

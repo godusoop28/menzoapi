@@ -16,9 +16,11 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * Directorio persistido de salas en vivo — sobrevive a un restart o a más de una instancia,
- * a diferencia del mapa en memoria de VoiceService (que sigue siendo la fuente de verdad para
- * "quién está conectado ahora mismo", ver ese archivo). startedAt/lastHeartbeatAt se setean a
+ * Directorio persistido de salas en vivo — sobrevive a un restart o a más de una instancia.
+ * LiveService es la única autoridad que escribe roles/participantes reales (VoiceService quedó
+ * reducido a isLive()/liveRoomIds(), solo lectura, tras retirar su flujo /voice/* — ningún
+ * cliente actual lo llamaba, ver el comentario de clase en VoiceService). startedAt/
+ * lastHeartbeatAt se setean a
  * mano en el servicio, no con @CreationTimestamp — evita el mismo problema de lectura-antes-de-
  * flush que ya se encontró y corrigió en ChatService/UserService/PostService.
  */
