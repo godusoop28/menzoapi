@@ -19,6 +19,7 @@ import com.menzo.menzo.domain.chat.LiveParticipantStatus;
 import com.menzo.menzo.domain.chat.LiveSessionStatus;
 import com.menzo.menzo.domain.chat.RoomMember;
 import com.menzo.menzo.domain.chat.RoomRole;
+import com.menzo.menzo.domain.chat.RoomType;
 import com.menzo.menzo.domain.community.NotificationCategory;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
@@ -524,13 +525,25 @@ public class LiveService {
                 .orElseThrow(() -> new NotFoundException("No hay un LIVE activo en esta sala"));
     }
 
+    /** Antes rechazaba con 403 a cualquiera que no fuera YA miembro de la sala — pero el
+     * carrusel de "en vivo" (ver ChatService.listLiveRooms) lista TODAS las salas públicas en
+     * vivo, sin filtrar por membresía, justo para que se puedan descubrir salas ajenas. Eso
+     * dejaba a cualquiera que tocara un LIVE ajeno desde ahí completamente bloqueado, sin
+     * ninguna forma de entrar desde la UI ("no pudimos conectar al LIVE" sin explicación).
+     * Unirse a un LIVE de una sala PÚBLICA ahora se auto-une como miembro, exactamente el mismo
+     * comportamiento que ya tiene ChatService.sendMessage al mandar el primer mensaje — solo las
+     * salas DIRECT (donde la membresía queda fija a los dos participantes desde que se crean)
+     * siguen exigiendo ser miembro de antes. */
     private void requireMember(UUID roomId, User me) {
-        if (!chatRoomRepository.existsById(roomId)) {
-            throw new NotFoundException("Sala no encontrada");
+        ChatRoom room = chatRoomRepository.findById(roomId)
+                .orElseThrow(() -> new NotFoundException("Sala no encontrada"));
+        if (roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
+            return;
         }
-        if (!roomMemberRepository.existsByRoomIdAndUserId(roomId, me.getId())) {
-            throw new ForbiddenException("Tenés que unirte a la sala antes de entrar al LIVE");
+        if (room.getType() == RoomType.DIRECT) {
+            throw new ForbiddenException("No tienes acceso a esta sala");
         }
+        roomMemberRepository.save(new RoomMember(roomId, me.getId()));
     }
 
     private RoomRole requireOwnerOrCoHost(UUID roomId, User actor) {
