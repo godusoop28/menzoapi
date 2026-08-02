@@ -48,6 +48,7 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                 JwtService.DecodedAccessToken decoded = jwtService.parse(header.substring(7));
                 User user = userRepository.findById(decoded.userId())
                         .filter(User::isEnabled)
+                        .filter(u -> !u.isSuspended())
                         .orElseThrow(() -> new JwtException("Usuario no encontrado"));
                 var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()));
                 var authentication = new UsernamePasswordAuthenticationToken(user, null, authorities);

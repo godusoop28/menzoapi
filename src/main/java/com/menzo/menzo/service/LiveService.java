@@ -21,6 +21,7 @@ import com.menzo.menzo.domain.chat.RoomMember;
 import com.menzo.menzo.domain.chat.RoomRole;
 import com.menzo.menzo.domain.chat.RoomType;
 import com.menzo.menzo.domain.community.NotificationCategory;
+import com.menzo.menzo.domain.moderation.ModerationActionType;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
 import com.menzo.menzo.dto.live.LiveEvent;
@@ -72,6 +73,8 @@ public class LiveService {
     private final ProfileMapper profileMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final NotificationService notificationService;
+    private final AdminAuthorizationService adminAuthorizationService;
+    private final ModerationLogService moderationLogService;
 
     public LiveService(
             AgoraProperties agoraProperties,
@@ -83,7 +86,9 @@ public class LiveService {
             LiveParticipantRepository liveParticipantRepository,
             ProfileMapper profileMapper,
             ApplicationEventPublisher eventPublisher,
-            NotificationService notificationService) {
+            NotificationService notificationService,
+            AdminAuthorizationService adminAuthorizationService,
+            ModerationLogService moderationLogService) {
         this.agoraProperties = agoraProperties;
         this.chatRoomRepository = chatRoomRepository;
         this.roomMemberRepository = roomMemberRepository;
@@ -94,6 +99,8 @@ public class LiveService {
         this.profileMapper = profileMapper;
         this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
+        this.adminAuthorizationService = adminAuthorizationService;
+        this.moderationLogService = moderationLogService;
     }
 
     @Transactional(readOnly = true)
@@ -436,12 +443,30 @@ public class LiveService {
         publish(LiveEventType.CHAT_LIVE_PARTICIPANT_DEMOTED, roomId, session.getId(), toParticipantResponse(target));
     }
 
+    /** El anfitrión/coanfitrión de la sala expulsa sin motivo, como siempre. CURATOR+ global
+     * puede expulsar sin ser miembro de la sala, pero necesita motivo obligatorio y queda
+     * registrado en el log de moderación — a diferencia del camino del anfitrión, que no se
+     * loguea (ver ModerationLogService). Ambos caminos siguen sin poder tocar al HOST. */
     @Transactional
-    public void removeParticipant(User actor, UUID roomId, UUID targetUserId) {
-        RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
+    public void removeParticipant(User actor, UUID roomId, UUID targetUserId, String staffReason) {
         ChatLiveSession session = getActiveSessionOrThrow(roomId);
         LiveParticipant target = findParticipantOrThrow(session.getId(), targetUserId);
-        requireCanModerateLiveParticipant(actorRole, target);
+
+        boolean isRoomStaff = roomMemberRepository.findByRoomIdAndUserId(roomId, actor.getId())
+                .map(membership -> membership.getRole() != RoomRole.MEMBER)
+                .orElse(false);
+        if (isRoomStaff) {
+            RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
+            requireCanModerateLiveParticipant(actorRole, target);
+        } else {
+            adminAuthorizationService.requireCurator(actor);
+            if (staffReason == null || staffReason.isBlank()) {
+                throw new BadRequestException("Necesitás indicar un motivo");
+            }
+            if (target.getRole() == LiveParticipantRole.HOST) {
+                throw new ForbiddenException("No se puede moderar al anfitrión del LIVE");
+            }
+        }
 
         target.setStatus(LiveParticipantStatus.LEFT);
         target.setLeftAt(Instant.now());
@@ -451,6 +476,11 @@ public class LiveService {
         recomputeCounts(session);
         chatLiveSessionRepository.save(session);
         publish(LiveEventType.CHAT_LIVE_PARTICIPANT_LEFT, roomId, session.getId(), toParticipantResponse(target));
+
+        if (!isRoomStaff) {
+            moderationLogService.record(
+                    actor, ModerationActionType.KICK_FROM_LIVE, "LIVE_SESSION", session.getId(), staffReason);
+        }
     }
 
     /** Espejo de estado para que los demás vean el badge de micrófono en tiempo real — la

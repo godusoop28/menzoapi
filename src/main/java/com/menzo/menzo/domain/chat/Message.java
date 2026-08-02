@@ -58,6 +58,17 @@ public class Message {
     @Column(name = "reply_to_message_id")
     private UUID replyToMessageId;
 
+    // UUID suelto, misma razón que replyToMessageId: borrar un pack de stickers no debería
+    // romper mensajes viejos que ya usaron un sticker de ese pack.
+    @Column(name = "sticker_id")
+    private UUID stickerId;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    @Column(name = "deleted_by_user_id")
+    private UUID deletedByUserId;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

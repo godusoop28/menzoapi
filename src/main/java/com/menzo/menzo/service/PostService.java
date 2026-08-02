@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.menzo.menzo.domain.community.CommunityEvent;
 import com.menzo.menzo.domain.community.NotificationCategory;
+import com.menzo.menzo.domain.moderation.ModerationActionType;
 import com.menzo.menzo.domain.post.Comment;
 import com.menzo.menzo.domain.post.PollOption;
 import com.menzo.menzo.domain.post.PollVote;
@@ -63,6 +64,8 @@ public class PostService {
     private final CommunityEventRepository communityEventRepository;
     private final NotificationService notificationService;
     private final ProfileMapper profileMapper;
+    private final AdminAuthorizationService adminAuthorizationService;
+    private final ModerationLogService moderationLogService;
 
     public PostService(
             PostRepository postRepository,
@@ -74,7 +77,9 @@ public class PostService {
             UserRepository userRepository,
             CommunityEventRepository communityEventRepository,
             NotificationService notificationService,
-            ProfileMapper profileMapper) {
+            ProfileMapper profileMapper,
+            AdminAuthorizationService adminAuthorizationService,
+            ModerationLogService moderationLogService) {
         this.postRepository = postRepository;
         this.pollOptionRepository = pollOptionRepository;
         this.pollVoteRepository = pollVoteRepository;
@@ -85,6 +90,8 @@ public class PostService {
         this.communityEventRepository = communityEventRepository;
         this.notificationService = notificationService;
         this.profileMapper = profileMapper;
+        this.adminAuthorizationService = adminAuthorizationService;
+        this.moderationLogService = moderationLogService;
     }
 
     @Transactional
@@ -143,17 +150,17 @@ public class PostService {
 
     @Transactional(readOnly = true)
     public PageResponse<PostResponse> listFeed(Pageable pageable, User viewer) {
-        return toPageResponse(postRepository.findAllByOrderByCreatedAtDesc(pageable), viewer);
+        return toPageResponse(postRepository.findByHiddenFalseOrderByCreatedAtDesc(pageable), viewer);
     }
 
     @Transactional(readOnly = true)
     public PageResponse<PostResponse> listFeatured(Pageable pageable, User viewer) {
-        return toPageResponse(postRepository.findByFeaturedTrueOrderByCreatedAtDesc(pageable), viewer);
+        return toPageResponse(postRepository.findByFeaturedTrueAndHiddenFalseOrderByCreatedAtDesc(pageable), viewer);
     }
 
     @Transactional(readOnly = true)
     public PageResponse<PostResponse> listByAuthor(UUID authorId, Pageable pageable, User viewer) {
-        return toPageResponse(postRepository.findByAuthorIdOrderByCreatedAtDesc(authorId, pageable), viewer);
+        return toPageResponse(postRepository.findByAuthorIdAndHiddenFalseOrderByCreatedAtDesc(authorId, pageable), viewer);
     }
 
     @Transactional(readOnly = true)
@@ -166,14 +173,52 @@ public class PostService {
         return toPageResponse(postRepository.search(query, pageable), viewer);
     }
 
+    /** El autor siempre puede borrar la suya, sin motivo. Un no-autor necesita LEADER+ y un
+     * motivo obligatorio (queda registrado en el log de moderación, visible para MASTER). */
     @Transactional
-    public void deletePost(User me, UUID postId) {
+    public void deletePost(User me, UUID postId, String staffReason) {
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new NotFoundException("Publicación no encontrada"));
-        if (!post.getAuthor().getId().equals(me.getId())) {
-            throw new ForbiddenException("Solo puedes eliminar tus propias publicaciones");
+        boolean isAuthor = post.getAuthor().getId().equals(me.getId());
+        if (!isAuthor) {
+            adminAuthorizationService.requireLeader(me);
+            if (staffReason == null || staffReason.isBlank()) {
+                throw new BadRequestException("Necesitás indicar un motivo");
+            }
         }
+        UUID postIdCopy = post.getId();
         postRepository.delete(post);
+        if (!isAuthor) {
+            moderationLogService.record(me, ModerationActionType.DELETE_POST, "POST", postIdCopy, staffReason);
+        }
+    }
+
+    /** CURATOR+: oculta una publicación de los listados públicos sin borrarla. Siempre requiere
+     * motivo y queda registrado. */
+    @Transactional
+    public void hidePost(User me, UUID postId, String reason) {
+        adminAuthorizationService.requireCurator(me);
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new NotFoundException("Publicación no encontrada"));
+        post.setHidden(true);
+        postRepository.save(post);
+        moderationLogService.record(me, ModerationActionType.HIDE_POST, "POST", post.getId(), reason);
+    }
+
+    @Transactional
+    public void unhidePost(User me, UUID postId, String reason) {
+        adminAuthorizationService.requireCurator(me);
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new NotFoundException("Publicación no encontrada"));
+        post.setHidden(false);
+        postRepository.save(post);
+        moderationLogService.record(me, ModerationActionType.UNHIDE_POST, "POST", post.getId(), reason);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<PostResponse> searchForAdmin(User me, String query, Pageable pageable) {
+        adminAuthorizationService.requireCurator(me);
+        return toPageResponse(postRepository.searchForAdmin(query, pageable), me);
     }
 
     @Transactional
@@ -418,7 +463,8 @@ public class PostService {
                 post.getCommentCount(),
                 post.isFeatured(),
                 post.getCreatedAt(),
-                post.getBlocks());
+                post.getBlocks(),
+                post.isHidden());
     }
 
     private CommentResponse toCommentResponse(Comment comment) {

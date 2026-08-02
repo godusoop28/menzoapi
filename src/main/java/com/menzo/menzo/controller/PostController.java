@@ -25,6 +25,7 @@ import com.menzo.menzo.dto.post.CreatePostRequest;
 import com.menzo.menzo.dto.post.PostResponse;
 import com.menzo.menzo.dto.post.UpdatePostRequest;
 import com.menzo.menzo.dto.post.VoteRequest;
+import com.menzo.menzo.dto.moderation.ReasonRequest;
 import com.menzo.menzo.service.PostService;
 
 import jakarta.validation.Valid;
@@ -92,8 +93,11 @@ public class PostController {
 
     @DeleteMapping("/posts/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deletePost(@PathVariable UUID id, @AuthenticationPrincipal User me) {
-        postService.deletePost(me, id);
+    public void deletePost(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User me,
+            @RequestBody(required = false) ReasonRequest request) {
+        postService.deletePost(me, id, request != null ? request.reason() : null);
     }
 
     @PutMapping("/posts/{id}/like")

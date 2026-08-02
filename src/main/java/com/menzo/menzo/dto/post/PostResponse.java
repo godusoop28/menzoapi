@@ -25,5 +25,6 @@ public record PostResponse(
         int commentCount,
         boolean featured,
         Instant createdAt,
-        List<PostBlock> blocks) {
+        List<PostBlock> blocks,
+        boolean hidden) {
 }

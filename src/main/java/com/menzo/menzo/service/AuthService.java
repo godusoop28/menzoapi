@@ -9,7 +9,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.menzo.menzo.config.AdminProperties;
 import com.menzo.menzo.domain.auth.RefreshToken;
+import com.menzo.menzo.domain.user.Role;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.domain.user.UserSettings;
 import com.menzo.menzo.dto.auth.AuthResponse;
@@ -39,6 +41,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final ProfileMapper profileMapper;
+    private final AdminProperties adminProperties;
 
     public AuthService(
             UserRepository userRepository,
@@ -47,7 +50,8 @@ public class AuthService {
             RefreshTokenRepository refreshTokenRepository,
             PasswordEncoder passwordEncoder,
             JwtService jwtService,
-            ProfileMapper profileMapper) {
+            ProfileMapper profileMapper,
+            AdminProperties adminProperties) {
         this.userRepository = userRepository;
         this.auraRepository = auraRepository;
         this.userSettingsRepository = userSettingsRepository;
@@ -55,6 +59,7 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.profileMapper = profileMapper;
+        this.adminProperties = adminProperties;
     }
 
     @Transactional
@@ -75,6 +80,9 @@ public class AuthService {
         user.setOnline(true);
         user.setLastActiveAt(Instant.now());
         user.setOnboardingCompleted(false);
+        if (email.equalsIgnoreCase(adminProperties.getMasterEmail().trim())) {
+            user.setRole(Role.MASTER);
+        }
         user = userRepository.save(user);
 
         userSettingsRepository.save(new UserSettings(user.getId()));
@@ -90,6 +98,9 @@ public class AuthService {
 
         if (!user.isEnabled() || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new UnauthorizedException("Credenciales inválidas");
+        }
+        if (user.isSuspended()) {
+            throw new UnauthorizedException("Tu cuenta está suspendida");
         }
 
         user.setOnline(true);

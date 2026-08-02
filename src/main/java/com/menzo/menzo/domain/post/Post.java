@@ -88,6 +88,12 @@ public class Post {
     @Column(nullable = false)
     private boolean featured = false;
 
+    // Acción de CURATOR+ ("ocultar", no "borrar") — distinto de eliminar por completo. Los
+    // listados de feed/búsqueda/muro filtran hidden = false; getPost (fetch directo por id) NO
+    // filtra, para que el autor o el staff que lo está revisando lo sigan viendo.
+    @Column(nullable = false)
+    private boolean hidden = false;
+
     @Column(name = "comment_count", nullable = false)
     private int commentCount = 0;
 

@@ -24,6 +24,7 @@ import com.menzo.menzo.dto.live.MicrophoneRequest;
 import com.menzo.menzo.dto.live.ScreenShareRequest;
 import com.menzo.menzo.dto.live.StartLiveRequest;
 import com.menzo.menzo.dto.live.UpdateLiveRequest;
+import com.menzo.menzo.dto.moderation.ReasonRequest;
 import com.menzo.menzo.service.LiveService;
 
 import jakarta.validation.Valid;
@@ -152,7 +153,11 @@ public class LiveController {
 
     @DeleteMapping("/participants/{userId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void remove(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
-        liveService.removeParticipant(me, id, userId);
+    public void remove(
+            @PathVariable UUID id,
+            @PathVariable UUID userId,
+            @AuthenticationPrincipal User me,
+            @RequestBody(required = false) ReasonRequest request) {
+        liveService.removeParticipant(me, id, userId, request != null ? request.reason() : null);
     }
 }

@@ -117,7 +117,8 @@ public class ProfileMapper {
                 followedByMe,
                 followsMe,
                 followedByMe && followsMe,
-                relationshipStatus);
+                relationshipStatus,
+                user.getRole().name());
     }
 
     public UserSummary toSummary(User user) {

@@ -29,6 +29,7 @@ import com.menzo.menzo.dto.chat.RoomMemberResponse;
 import com.menzo.menzo.dto.chat.SendMessageRequest;
 import com.menzo.menzo.dto.chat.UpdateRoomRequest;
 import com.menzo.menzo.dto.common.PageResponse;
+import com.menzo.menzo.dto.moderation.ReasonRequest;
 import com.menzo.menzo.service.ChatService;
 
 import jakarta.validation.Valid;
@@ -118,6 +119,16 @@ public class ChatController {
     public MessageResponse sendMessage(
             @PathVariable UUID id, @AuthenticationPrincipal User me, @Valid @RequestBody SendMessageRequest request) {
         return chatService.sendMessage(me, id, request);
+    }
+
+    @DeleteMapping("/{id}/messages/{messageId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteMessage(
+            @PathVariable UUID id,
+            @PathVariable UUID messageId,
+            @AuthenticationPrincipal User me,
+            @RequestBody(required = false) ReasonRequest request) {
+        chatService.deleteMessage(me, id, messageId, request != null ? request.reason() : null);
     }
 
     @GetMapping("/{id}/members")

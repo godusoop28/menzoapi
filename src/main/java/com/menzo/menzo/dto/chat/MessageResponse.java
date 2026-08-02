@@ -19,7 +19,9 @@ public record MessageResponse(
         String body,
         String imageUri,
         String createdAt,
-        ReplyPreview replyTo) {
+        ReplyPreview replyTo,
+        boolean deleted,
+        StickerPreview sticker) {
 
     /**
      * Copia liviana del mensaje citado, embebida acá para que ningún cliente necesite un segundo
@@ -28,5 +30,11 @@ public record MessageResponse(
      * no traen el contenido real, los clientes deben mostrar "Mensaje eliminado" en su lugar.
      */
     public record ReplyPreview(UUID id, String authorName, String bodyPreview, boolean deleted) {
+    }
+
+    /** Igual razonamiento que ReplyPreview: evita un segundo fetch al picker solo para pintar la
+     * burbuja. UUID suelto en Message.stickerId (ver V25__stickers.sql), así que si el sticker
+     * ya no existe esto viene null y el cliente cae a un placeholder simple. */
+    public record StickerPreview(UUID id, String imageUrl) {
     }
 }

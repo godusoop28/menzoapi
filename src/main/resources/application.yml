@@ -57,6 +57,9 @@ menzo:
     # App ID y App Certificate del proyecto en Agora Console (se configuran en Render como secretos).
     app-id: ${AGORA_APP_ID:}
     app-certificate: ${AGORA_APP_CERTIFICATE:}
+  admin:
+    # Única cuenta MASTER de la plataforma — ver MasterAccountBootstrap y AuthService.register().
+    master-email: ${MENZO_MASTER_EMAIL:emy.rodriguezc28@gmail.com}
 
 youtube:
   # Única variable secreta de esta sección — se configura en Render como secreto, nunca en el repo.

@@ -31,5 +31,6 @@ public record UserProfileResponse(
         boolean followedByMe,
         boolean followsMe,
         boolean areFriends,
-        RelationshipStatus relationshipStatus) {
+        RelationshipStatus relationshipStatus,
+        String globalRole) {
 }

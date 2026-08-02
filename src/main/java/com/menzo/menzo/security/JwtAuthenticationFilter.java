@@ -55,7 +55,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private void authenticate(UUID userId) {
         Optional<User> user = userRepository.findById(userId);
-        if (user.isEmpty() || !user.get().isEnabled()) {
+        if (user.isEmpty() || !user.get().isEnabled() || user.get().isSuspended()) {
             return;
         }
         User principal = user.get();

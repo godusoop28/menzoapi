@@ -25,6 +25,7 @@ import com.menzo.menzo.domain.chat.RoomMember;
 import com.menzo.menzo.domain.chat.RoomRole;
 import com.menzo.menzo.domain.chat.RoomType;
 import com.menzo.menzo.domain.community.NotificationCategory;
+import com.menzo.menzo.domain.moderation.ModerationActionType;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.dto.chat.BanResponse;
 import com.menzo.menzo.dto.chat.ChatRoomResponse;
@@ -48,6 +49,7 @@ import com.menzo.menzo.repository.chat.MessageRepository;
 import com.menzo.menzo.repository.chat.RoomBanRepository;
 import com.menzo.menzo.repository.chat.RoomFavoriteRepository;
 import com.menzo.menzo.repository.chat.RoomMemberRepository;
+import com.menzo.menzo.repository.sticker.StickerRepository;
 import com.menzo.menzo.repository.user.UserRepository;
 import com.menzo.menzo.service.mapper.ProfileMapper;
 import com.menzo.menzo.util.TextSanitizer;
@@ -66,6 +68,9 @@ public class ChatService {
     private final VoiceService voiceService;
     private final LiveService liveService;
     private final NotificationService notificationService;
+    private final AdminAuthorizationService adminAuthorizationService;
+    private final ModerationLogService moderationLogService;
+    private final StickerRepository stickerRepository;
 
     public ChatService(
             ChatRoomRepository chatRoomRepository,
@@ -78,7 +83,10 @@ public class ChatService {
             SimpMessagingTemplate messagingTemplate,
             VoiceService voiceService,
             LiveService liveService,
-            NotificationService notificationService) {
+            NotificationService notificationService,
+            AdminAuthorizationService adminAuthorizationService,
+            ModerationLogService moderationLogService,
+            StickerRepository stickerRepository) {
         this.chatRoomRepository = chatRoomRepository;
         this.roomMemberRepository = roomMemberRepository;
         this.roomFavoriteRepository = roomFavoriteRepository;
@@ -90,6 +98,9 @@ public class ChatService {
         this.voiceService = voiceService;
         this.liveService = liveService;
         this.notificationService = notificationService;
+        this.adminAuthorizationService = adminAuthorizationService;
+        this.moderationLogService = moderationLogService;
+        this.stickerRepository = stickerRepository;
     }
 
     /** Solo las salas a las que el usuario ya se unió (públicas o directas) — "Mis chats". */
@@ -416,9 +427,18 @@ public class ChatService {
         Message message = new Message();
         message.setRoom(room);
         message.setAuthor(me);
-        message.setType(MessageType.text);
-        message.setBody(request.body() == null ? "" : request.body());
-        message.setImageUri(request.imageUri());
+        if (request.stickerId() != null) {
+            if (!stickerRepository.existsById(request.stickerId())) {
+                throw new NotFoundException("Sticker no encontrado");
+            }
+            message.setType(MessageType.sticker);
+            message.setBody("");
+            message.setStickerId(request.stickerId());
+        } else {
+            message.setType(MessageType.text);
+            message.setBody(request.body() == null ? "" : request.body());
+            message.setImageUri(request.imageUri());
+        }
         if (request.replyToMessageId() != null) {
             // Si la referencia apunta a un mensaje de OTRA sala (carrera benigna: el cliente
             // armó la respuesta y el usuario cambió de sala antes de que el envío saliera),
@@ -466,6 +486,41 @@ public class ChatService {
         requireCanAccess(room, viewer);
         Page<Message> page = messageRepository.findByRoomIdOrderByCreatedAtDescIdDesc(roomId, pageable);
         return PageResponse.of(page, this::toMessageResponse);
+    }
+
+    /** El autor siempre puede borrar el suyo. Un no-autor necesita CURATOR+ Y que la sala NO sea
+     * DIRECT (chequeo explícito incluso para staff global — extiende el principio de exclusión de
+     * DIRECT también al borrado de mensajes, no solo a su lectura, ver
+     * MessageRepository.findByIdAndRoomTypePublic) Y un motivo obligatorio. Soft-delete: el
+     * mensaje sigue existiendo (deletedAt/deletedByUserId), el cliente pinta "Mensaje eliminado"
+     * igual que ya hace con una respuesta a un mensaje borrado. */
+    @Transactional
+    public void deleteMessage(User me, UUID roomId, UUID messageId, String staffReason) {
+        Message message = messageRepository.findById(messageId)
+                .filter(m -> m.getRoom().getId().equals(roomId))
+                .orElseThrow(() -> new NotFoundException("Mensaje no encontrado"));
+        boolean isAuthor = message.getAuthor() != null && message.getAuthor().getId().equals(me.getId());
+        if (!isAuthor) {
+            adminAuthorizationService.requireCurator(me);
+            // No devuelve el mensaje si la sala es DIRECT — ni CURATOR ni MASTER pueden tocar un
+            // mensaje directo, sin excepción (ver Contexto del plan, decisión #2 confirmada).
+            messageRepository.findByIdAndRoomTypePublic(messageId)
+                    .orElseThrow(() -> new NotFoundException("Mensaje no encontrado"));
+            if (staffReason == null || staffReason.isBlank()) {
+                throw new BadRequestException("Necesitás indicar un motivo");
+            }
+        }
+
+        message.setDeletedAt(Instant.now());
+        message.setDeletedByUserId(me.getId());
+        message = messageRepository.save(message);
+
+        MessageResponse response = toMessageResponse(message);
+        broadcastMessage(roomId, response);
+
+        if (!isAuthor) {
+            moderationLogService.record(me, ModerationActionType.DELETE_MESSAGE, "MESSAGE", messageId, staffReason);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -722,16 +777,26 @@ public class ChatService {
 
     private MessageResponse toMessageResponse(Message message) {
         boolean isSystem = message.getType() == MessageType.system || message.getAuthor() == null;
+        boolean deleted = message.getDeletedAt() != null;
         return new MessageResponse(
                 message.getId(),
                 message.getRoom().getId(),
                 isSystem ? "system" : message.getAuthor().getId().toString(),
                 isSystem ? null : profileMapper.toSummary(message.getAuthor()),
                 message.getType().name(),
-                message.getBody(),
-                message.getImageUri(),
+                deleted ? "" : message.getBody(),
+                deleted ? null : message.getImageUri(),
                 formatInstant(message.getCreatedAt()),
-                toReplyPreview(message.getReplyToMessageId()));
+                toReplyPreview(message.getReplyToMessageId()),
+                deleted,
+                deleted ? null : toStickerPreview(message.getStickerId()));
+    }
+
+    private MessageResponse.StickerPreview toStickerPreview(UUID stickerId) {
+        if (stickerId == null) return null;
+        return stickerRepository.findById(stickerId)
+                .map(sticker -> new MessageResponse.StickerPreview(sticker.getId(), sticker.getImageUrl()))
+                .orElse(null);
     }
 
     /** Sin FK forzada (ver V18__message_reply.sql), así que "el id no resuelve" es una señal
