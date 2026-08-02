@@ -25,4 +25,10 @@ public interface LiveParticipantRepository extends JpaRepository<LiveParticipant
     long countByLiveSessionIdAndStatus(UUID liveSessionId, LiveParticipantStatus status);
 
     List<LiveParticipant> findByRoomIdAndStatus(UUID roomId, LiveParticipantStatus status);
+
+    /** Para el uno-a-la-vez de screen share (ver LiveService.setScreenSharing) — a lo sumo una
+     * fila "true" por sesión en la práctica, pero es una lista (no Optional) porque nada en el
+     * schema lo garantiza a nivel de constraint; el servicio la trata como "el/los que había
+     * compartiendo antes de este cambio", nunca asume tamaño 0 o 1. */
+    List<LiveParticipant> findByLiveSessionIdAndScreenSharingTrue(UUID liveSessionId);
 }

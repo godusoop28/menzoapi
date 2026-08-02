@@ -8,6 +8,7 @@ public record LiveParticipantResponse(
         UserSummary user,
         String role,
         boolean microphoneEnabled,
+        boolean screenSharing,
         Instant requestedToSpeakAt,
         Instant joinedAt) {
 }

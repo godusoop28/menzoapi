@@ -54,6 +54,9 @@ public class LiveParticipant {
     @Column(name = "microphone_enabled", nullable = false)
     private boolean microphoneEnabled = false;
 
+    @Column(name = "screen_sharing", nullable = false)
+    private boolean screenSharing = false;
+
     @Column(name = "requested_to_speak_at")
     private Instant requestedToSpeakAt;
 

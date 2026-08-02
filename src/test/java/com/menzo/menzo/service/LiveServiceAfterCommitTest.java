@@ -201,6 +201,60 @@ class LiveServiceAfterCommitTest {
     }
 
     @Test
+    void setScreenSharingRejectsPlainSpeaker() {
+        // `target` quedó como SPEAKER en setUp — puede hablar, pero eso no alcanza para compartir
+        // pantalla (gate más angosto que SPEAKING_ROLES, ver LiveService.setScreenSharing).
+        assertThatThrownBy(() -> liveService.setScreenSharing(target, roomId, true))
+                .isInstanceOf(ForbiddenException.class);
+        verifyNoInteractions(messagingTemplate);
+    }
+
+    @Test
+    void setScreenSharingAllowsHostAndPublishesStarted() {
+        liveService.setScreenSharing(owner, roomId, true);
+
+        ArgumentCaptor<LiveEvent> captor = ArgumentCaptor.forClass(LiveEvent.class);
+        verify(messagingTemplate, times(1)).convertAndSend(anyString(), captor.capture());
+        assertThat(captor.getValue().type()).isEqualTo(LiveEventType.CHAT_LIVE_SCREEN_SHARE_STARTED);
+
+        LiveParticipant reloaded = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(activeSessionId(), owner.getId())
+                .orElseThrow();
+        assertThat(reloaded.isScreenSharing()).isTrue();
+    }
+
+    @Test
+    void setScreenSharingAutoStopsThePreviousPresenter() {
+        // Se promueve a `target` a CO_HOST directo por repositorio (mismo atajo que el resto de
+        // este archivo usa para SPEAKER) — lo que este test verifica es el traspaso, no el flujo
+        // de promoción en sí.
+        LiveParticipant targetParticipant = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(activeSessionId(), target.getId())
+                .orElseThrow();
+        targetParticipant.setRole(com.menzo.menzo.domain.chat.LiveParticipantRole.CO_HOST);
+        liveParticipantRepository.save(targetParticipant);
+
+        liveService.setScreenSharing(owner, roomId, true);
+        reset(messagingTemplate);
+
+        liveService.setScreenSharing(target, roomId, true);
+
+        ArgumentCaptor<LiveEvent> captor = ArgumentCaptor.forClass(LiveEvent.class);
+        verify(messagingTemplate, times(2)).convertAndSend(anyString(), captor.capture());
+        assertThat(captor.getAllValues().stream().map(LiveEvent::type))
+                .containsExactly(LiveEventType.CHAT_LIVE_SCREEN_SHARE_STOPPED, LiveEventType.CHAT_LIVE_SCREEN_SHARE_STARTED);
+
+        LiveParticipant ownerReloaded = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(activeSessionId(), owner.getId())
+                .orElseThrow();
+        LiveParticipant targetReloaded = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(activeSessionId(), target.getId())
+                .orElseThrow();
+        assertThat(ownerReloaded.isScreenSharing()).isFalse();
+        assertThat(targetReloaded.isScreenSharing()).isTrue();
+    }
+
+    @Test
     void newHostStartsMutedNotUnmuted() {
         // Fase 14: el HOST que inicia el LIVE debe entrar con microphoneEnabled=false — Flutter
         // siempre publica el audio ya silenciado por defecto (ver LiveNotifier._publishMic), así

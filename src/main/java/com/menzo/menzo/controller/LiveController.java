@@ -21,6 +21,7 @@ import com.menzo.menzo.dto.live.LiveParticipantResponse;
 import com.menzo.menzo.dto.live.LiveSessionResponse;
 import com.menzo.menzo.dto.live.LiveTokenResponse;
 import com.menzo.menzo.dto.live.MicrophoneRequest;
+import com.menzo.menzo.dto.live.ScreenShareRequest;
 import com.menzo.menzo.dto.live.StartLiveRequest;
 import com.menzo.menzo.dto.live.UpdateLiveRequest;
 import com.menzo.menzo.service.LiveService;
@@ -99,6 +100,13 @@ public class LiveController {
     public void microphone(
             @PathVariable UUID id, @AuthenticationPrincipal User me, @RequestBody MicrophoneRequest request) {
         liveService.setMicrophone(me, id, request.enabled());
+    }
+
+    @PostMapping("/screen-share")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void screenShare(
+            @PathVariable UUID id, @AuthenticationPrincipal User me, @RequestBody ScreenShareRequest request) {
+        liveService.setScreenSharing(me, id, request.enabled());
     }
 
     @PostMapping("/speaking-requests")

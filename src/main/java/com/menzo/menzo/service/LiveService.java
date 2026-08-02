@@ -486,6 +486,40 @@ public class LiveService {
         publish(LiveEventType.CHAT_LIVE_MICROPHONE_CHANGED, roomId, session.getId(), toParticipantResponse(target));
     }
 
+    /** Autoservicio como setMicrophone (no requireOwnerOrCoHost), pero con un gate más angosto:
+     * solo HOST/CO_HOST pueden compartir pantalla, no cualquier SPEAKING_ROLE. Uno-a-la-vez estilo
+     * Discord: en vez de rechazar al segundo con un error, se corta automáticamente a quien ya
+     * estaba compartiendo — más amigable para un traspaso entre anfitriones, y sigue siendo
+     * correcto ante la carrera de "dos tocan compartir a la vez" porque todo el método corre
+     * adentro de una sola transacción serializada por la fila: quien llega segundo gana, y el
+     * primero recibe su propio evento STOPPED para cortar la captura de pantalla de su lado
+     * también (no alcanza con solo actualizar el roster). */
+    @Transactional
+    public void setScreenSharing(User me, UUID roomId, boolean enabled) {
+        ChatLiveSession session = getActiveSessionOrThrow(roomId);
+        LiveParticipant participant = liveParticipantRepository
+                .findByLiveSessionIdAndUserId(session.getId(), me.getId())
+                .orElseThrow(() -> new ForbiddenException("No estás en este LIVE"));
+        if (enabled) {
+            if (participant.getRole() != LiveParticipantRole.HOST
+                    && participant.getRole() != LiveParticipantRole.CO_HOST) {
+                throw new ForbiddenException("Solo el anfitrión o un coanfitrión pueden compartir pantalla");
+            }
+            for (LiveParticipant other : liveParticipantRepository
+                    .findByLiveSessionIdAndScreenSharingTrue(session.getId())) {
+                if (other.getUserId().equals(me.getId())) continue;
+                other.setScreenSharing(false);
+                liveParticipantRepository.save(other);
+                publish(LiveEventType.CHAT_LIVE_SCREEN_SHARE_STOPPED, roomId, session.getId(),
+                        toParticipantResponse(other));
+            }
+        }
+        participant.setScreenSharing(enabled);
+        liveParticipantRepository.save(participant);
+        publish(enabled ? LiveEventType.CHAT_LIVE_SCREEN_SHARE_STARTED : LiveEventType.CHAT_LIVE_SCREEN_SHARE_STOPPED,
+                roomId, session.getId(), toParticipantResponse(participant));
+    }
+
     // ---- helpers -----------------------------------------------------------------------------
 
     private LiveParticipantRole defaultRoleFor(UUID roomId, User me) {
@@ -592,6 +626,7 @@ public class LiveService {
                 user,
                 participant.getRole().name(),
                 participant.isMicrophoneEnabled(),
+                participant.isScreenSharing(),
                 participant.getRequestedToSpeakAt(),
                 participant.getJoinedAt());
     }
