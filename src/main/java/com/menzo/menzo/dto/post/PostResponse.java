@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import com.menzo.menzo.domain.post.PostBlock;
 import com.menzo.menzo.dto.user.UserSummary;
 
 public record PostResponse(
@@ -23,5 +24,6 @@ public record PostResponse(
         boolean bookmarkedByMe,
         int commentCount,
         boolean featured,
-        Instant createdAt) {
+        Instant createdAt,
+        List<PostBlock> blocks) {
 }

@@ -23,6 +23,7 @@ import com.menzo.menzo.dto.post.CommentRequest;
 import com.menzo.menzo.dto.post.CommentResponse;
 import com.menzo.menzo.dto.post.CreatePostRequest;
 import com.menzo.menzo.dto.post.PostResponse;
+import com.menzo.menzo.dto.post.UpdatePostRequest;
 import com.menzo.menzo.dto.post.VoteRequest;
 import com.menzo.menzo.service.PostService;
 
@@ -81,6 +82,12 @@ public class PostController {
     @ResponseStatus(HttpStatus.CREATED)
     public PostResponse createPost(@AuthenticationPrincipal User me, @Valid @RequestBody CreatePostRequest request) {
         return postService.createPost(me, request);
+    }
+
+    @PutMapping("/posts/{id}")
+    public PostResponse updatePost(
+            @PathVariable UUID id, @AuthenticationPrincipal User me, @Valid @RequestBody UpdatePostRequest request) {
+        return postService.updatePost(me, id, request);
     }
 
     @DeleteMapping("/posts/{id}")

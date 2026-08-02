@@ -65,6 +65,13 @@ youtube:
   relevance-language: ${YOUTUBE_RELEVANCE_LANGUAGE:es}
   max-results: ${YOUTUBE_MAX_RESULTS:10}
 
+tenor:
+  # Igual que youtube.api-key: se configura en Render como secreto, nunca en el repo. Vacía hasta
+  # que se complete — el endpoint responde vacío en vez de tirar, ver TenorClient.
+  api-key: ${TENOR_API_KEY:}
+  client-key: ${TENOR_CLIENT_KEY:menzo}
+  limit: ${TENOR_SEARCH_LIMIT:24}
+
 springdoc:
   swagger-ui:
     path: /docs

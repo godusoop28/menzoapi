@@ -1,0 +1,1 @@
+ALTER TABLE posts ADD COLUMN blocks JSONB NOT NULL DEFAULT '[]'::jsonb;

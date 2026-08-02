@@ -8,7 +8,9 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import com.menzo.menzo.domain.community.CommunityEvent;
 import com.menzo.menzo.domain.user.User;
@@ -55,11 +57,24 @@ public class Post {
     @Column(length = 150)
     private String title;
 
+    // Para posts de tipo text/image: excerpt de solo texto derivado server-side de `blocks`
+    // (concatenación de paragraph/heading, ver PostService) — NO es lo que el usuario tipeó
+    // directamente, así que sigue alimentando búsqueda (PostRepository.search) y los previews de
+    // notificación sin tocar ese código. Para poll/question/event sigue siendo el body crudo de
+    // siempre — esos tipos no usan `blocks`.
     @Column(nullable = false, columnDefinition = "text")
     private String body;
 
     @Column(name = "image_uri", columnDefinition = "text")
     private String imageUri;
+
+    // Contenido real de un post text/image — lista ordenada de bloques (párrafo/título/imagen/
+    // gif/separador, ver PostBlock). Default '[]' para que cada fila ya existente antes de esta
+    // columna siga rindiendo exactamente igual que antes (los clientes caen al `body`/`imageUri`
+    // planos cuando `blocks` viene vacío — ver PostBlockRenderer en ambos clientes).
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb", nullable = false)
+    private List<PostBlock> blocks = new ArrayList<>();
 
     @Column(name = "abstract_visual_preset", length = 30)
     private String abstractVisualPreset;
