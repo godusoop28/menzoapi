@@ -475,9 +475,12 @@ public class LiveService {
         RoomRole actorRole = requireOwnerOrCoHost(roomId, actor);
         ChatLiveSession session = getActiveSessionOrThrow(roomId);
         LiveParticipant target = findParticipantOrThrow(session.getId(), targetUserId);
-        if (target.getRole() == LiveParticipantRole.HOST && actorRole != RoomRole.OWNER) {
-            throw new ForbiddenException("Solo el anfitrión puede silenciar al anfitrión");
-        }
+        // Antes tenía su propio chequeo inline ("solo el OWNER puede mutear al HOST"), distinto
+        // del que usan demoteParticipant/removeParticipant (requireCanModerateLiveParticipant,
+        // que rechaza moderar al HOST sin excepción). Dos reglas distintas para "moderar a
+        // alguien en el LIVE" es la asimetría real que quedó pendiente de la auditoría de
+        // permisos — unificado acá a la misma función que ya usan las otras dos acciones.
+        requireCanModerateLiveParticipant(actorRole, target);
         target.setMicrophoneEnabled(false);
         liveParticipantRepository.save(target);
         publish(LiveEventType.CHAT_LIVE_MICROPHONE_CHANGED, roomId, session.getId(), toParticipantResponse(target));

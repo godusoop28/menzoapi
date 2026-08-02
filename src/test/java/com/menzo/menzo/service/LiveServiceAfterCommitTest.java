@@ -1,6 +1,7 @@
 package com.menzo.menzo.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -28,6 +29,7 @@ import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.domain.chat.ChatRoom;
 import com.menzo.menzo.dto.live.LiveEvent;
 import com.menzo.menzo.dto.live.LiveEventType;
+import com.menzo.menzo.exception.ForbiddenException;
 import com.menzo.menzo.repository.chat.ChatLiveSessionRepository;
 import com.menzo.menzo.repository.chat.ChatRoomRepository;
 import com.menzo.menzo.repository.chat.LiveParticipantRepository;
@@ -155,6 +157,18 @@ class LiveServiceAfterCommitTest {
                 .orElseThrow();
         // El rollback deshizo el mute — sigue como estaba antes (true, seteado en setUp).
         assertThat(reloaded.isMicrophoneEnabled()).isTrue();
+    }
+
+    /** Fase de estabilización: forceMute tenía su propio chequeo inline ("solo el OWNER puede
+     * mutear al HOST"), distinto del que usan demoteParticipant/removeParticipant
+     * (requireCanModerateLiveParticipant, que rechaza moderar al HOST sin excepción alguna).
+     * Unificado a la misma regla — ahora ni el propio OWNER puede forceMute-ear al HOST por esta
+     * vía (igual que ya pasaba con demote/remove), sin importar que sea la misma persona. */
+    @Test
+    void forceMuteOnHostIsForbiddenEvenForOwner() {
+        assertThatThrownBy(() -> liveService.forceMute(owner, roomId, owner.getId()))
+                .isInstanceOf(ForbiddenException.class);
+        verifyNoInteractions(messagingTemplate);
     }
 
     @Test
