@@ -173,7 +173,7 @@ class LiveServiceAfterCommitTest {
 
     @Test
     void removeParticipantMarksLeftAndPublishesAfterCommit() {
-        liveService.removeParticipant(owner, roomId, target.getId());
+        liveService.removeParticipant(owner, roomId, target.getId(), null);
 
         verify(messagingTemplate, times(1)).convertAndSend(anyString(), org.mockito.ArgumentMatchers.any(LiveEvent.class));
         LiveParticipant reloaded = liveParticipantRepository

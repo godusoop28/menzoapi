@@ -84,10 +84,10 @@ class ChatServiceReplyTest {
     void replyWithinSameRoomEmbedsPreview() {
         ChatRoom room = createRoomWithMember(sender);
         MessageResponse original = chatService.sendMessage(
-                sender, room.getId(), new SendMessageRequest("Mensaje original", null, null));
+                sender, room.getId(), new SendMessageRequest("Mensaje original", null, null, null));
 
         MessageResponse reply = chatService.sendMessage(
-                sender, room.getId(), new SendMessageRequest("Respondiendo esto", null, original.id()));
+                sender, room.getId(), new SendMessageRequest("Respondiendo esto", null, original.id(), null));
 
         assertThat(reply.replyTo()).isNotNull();
         assertThat(reply.replyTo().id()).isEqualTo(original.id());
@@ -101,10 +101,10 @@ class ChatServiceReplyTest {
         ChatRoom roomA = createRoomWithMember(sender);
         ChatRoom roomB = createRoomWithMember(sender);
         MessageResponse inRoomA = chatService.sendMessage(
-                sender, roomA.getId(), new SendMessageRequest("Vivo en la sala A", null, null));
+                sender, roomA.getId(), new SendMessageRequest("Vivo en la sala A", null, null, null));
 
         MessageResponse sentInRoomB = chatService.sendMessage(
-                sender, roomB.getId(), new SendMessageRequest("Respuesta cruzada", null, inRoomA.id()));
+                sender, roomB.getId(), new SendMessageRequest("Respuesta cruzada", null, inRoomA.id(), null));
 
         assertThat(sentInRoomB.replyTo()).isNull();
     }
