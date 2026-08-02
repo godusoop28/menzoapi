@@ -101,9 +101,31 @@ public class ChatService {
                 .filter(room -> roomMemberRepository.existsByRoomIdAndUserId(room.getId(), viewer.getId()))
                 .toList());
         rooms.addAll(chatRoomRepository.findDirectRoomsForUser(viewer.getId()));
-        return rooms.stream()
+        List<ChatRoomResponse> responses = rooms.stream()
                 .map(room -> toRoomResponse(room, viewer))
-                .toList();
+                .collect(Collectors.toCollection(ArrayList::new));
+        responses.sort(INBOX_ORDER);
+        return responses;
+    }
+
+    /** "Mis chats" ordenada por actividad más reciente, no por el orden en que las trajo la
+     * consulta (antes no se ordenaba nada acá — la bandeja mostraba las salas en un orden
+     * esencialmente arbitrario, sin relación con qué conversación tenía el mensaje más nuevo).
+     * COALESCE(lastMessage.createdAt, updatedAt, createdAt) DESC, con un desempate estable por
+     * id para que dos salas con exactamente el mismo instante no floten de posición entre
+     * pedidos sucesivos. */
+    static final Comparator<ChatRoomResponse> INBOX_ORDER = Comparator
+            .comparing(ChatService::inboxActivityInstant, Comparator.reverseOrder())
+            .thenComparing(ChatRoomResponse::id);
+
+    private static Instant inboxActivityInstant(ChatRoomResponse room) {
+        if (room.lastMessage() != null && room.lastMessage().createdAt() != null) {
+            return room.lastMessage().createdAt();
+        }
+        if (room.updatedAt() != null) {
+            return room.updatedAt();
+        }
+        return room.createdAt();
     }
 
     /** Solo las salas públicas que están en vivo ahora mismo, para el carrusel "En vivo ahora" —
