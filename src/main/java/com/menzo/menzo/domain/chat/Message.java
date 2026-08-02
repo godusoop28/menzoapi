@@ -51,6 +51,13 @@ public class Message {
     @Column(name = "image_uri", columnDefinition = "text")
     private String imageUri;
 
+    // UUID suelto, no un @ManyToOne — a propósito (ver V18__message_reply.sql): sin FK forzada,
+    // si el mensaje original alguna vez se borra (no existe ese endpoint hoy, pero esto deja el
+    // terreno listo) esta columna conserva el id igual, y ChatService.toReplyPreview puede armar
+    // un preview "Mensaje eliminado" en vez de perder la referencia sin más.
+    @Column(name = "reply_to_message_id")
+    private UUID replyToMessageId;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

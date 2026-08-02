@@ -18,5 +18,15 @@ public record MessageResponse(
         String type,
         String body,
         String imageUri,
-        String createdAt) {
+        String createdAt,
+        ReplyPreview replyTo) {
+
+    /**
+     * Copia liviana del mensaje citado, embebida acá para que ningún cliente necesite un segundo
+     * fetch solo para pintar la cita. `deleted=true` cuando el mensaje original ya no existe (la
+     * FK usa ON DELETE SET NULL, ver V18__message_reply.sql) — en ese caso `authorName`/`bodyPreview`
+     * no traen el contenido real, los clientes deben mostrar "Mensaje eliminado" en su lugar.
+     */
+    public record ReplyPreview(UUID id, String authorName, String bodyPreview, boolean deleted) {
+    }
 }

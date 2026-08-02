@@ -6,6 +6,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -418,6 +419,17 @@ public class ChatService {
         message.setType(MessageType.text);
         message.setBody(request.body() == null ? "" : request.body());
         message.setImageUri(request.imageUri());
+        if (request.replyToMessageId() != null) {
+            // Si la referencia apunta a un mensaje de OTRA sala (carrera benigna: el cliente
+            // armó la respuesta y el usuario cambió de sala antes de que el envío saliera),
+            // se ignora en silencio en vez de rechazar el mensaje entero — no es un error del
+            // usuario, y el mensaje sigue teniendo sentido enviado sin la cita.
+            Optional<Message> replyTarget = messageRepository.findById(request.replyToMessageId())
+                    .filter(original -> original.getRoom().getId().equals(roomId));
+            if (replyTarget.isPresent()) {
+                message.setReplyToMessageId(replyTarget.get().getId());
+            }
+        }
         message = messageRepository.saveAndFlush(message);
 
         MessageResponse response = toMessageResponse(message);
@@ -718,7 +730,27 @@ public class ChatService {
                 message.getType().name(),
                 message.getBody(),
                 message.getImageUri(),
-                formatInstant(message.getCreatedAt()));
+                formatInstant(message.getCreatedAt()),
+                toReplyPreview(message.getReplyToMessageId()));
+    }
+
+    /** Sin FK forzada (ver V18__message_reply.sql), así que "el id no resuelve" es una señal
+     * real y distinguible de "nunca fue una respuesta" (`replyToMessageId == null`) — no existe
+     * ningún endpoint de borrado de mensajes hoy, pero esto deja el terreno correcto para cuando
+     * lo haya: el id sobrevive y el preview cae a "Mensaje eliminado" en vez de perderse. */
+    private MessageResponse.ReplyPreview toReplyPreview(UUID replyToMessageId) {
+        if (replyToMessageId == null) return null;
+        return messageRepository.findById(replyToMessageId)
+                .map(original -> {
+                    boolean originalIsSystem = original.getType() == MessageType.system || original.getAuthor() == null;
+                    String authorName = originalIsSystem ? "Menzo" : original.getAuthor().getDisplayName();
+                    String bodyPreview = original.getImageUri() != null && !original.getImageUri().isBlank()
+                            && (original.getBody() == null || original.getBody().isBlank())
+                            ? "Imagen"
+                            : truncate(original.getBody());
+                    return new MessageResponse.ReplyPreview(original.getId(), authorName, bodyPreview, false);
+                })
+                .orElseGet(() -> new MessageResponse.ReplyPreview(replyToMessageId, null, null, true));
     }
 
     /** Trunca a milisegundos antes de convertir a String — Hermes (el motor JS de React Native)
