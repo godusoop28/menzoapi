@@ -78,15 +78,15 @@ public class CommunityPermissionEvaluator {
         return role != null && role.ordinal() >= minRole.ordinal();
     }
 
-    /** Editar la apariencia (imágenes/colores) de una comunidad — permitido para quien la
-     * administra puntualmente (COMMUNITY_ADMIN+ ahí) O para staff global LEADER+ (mismo criterio
-     * que el resto de esta sesión: LEADER/MASTER tienen autoridad de plataforma sobre cualquier
-     * comunidad, no solo la propia — a diferencia de un COMMUNITY_ADMIN común, que solo administra
-     * la suya). */
+    /** Editar la apariencia/tema/navegación de una comunidad — permitido para
+     * COMMUNITY_CURATOR+ de esa comunidad (curador, moderador, admin u owner — ver Contexto: "los
+     * líderes, admin y curadores" deben poder cambiar portadas/fondos/decoraciones) O para staff
+     * global LEADER+ (mismo criterio que el resto de esta sesión: LEADER/MASTER tienen autoridad
+     * de plataforma sobre cualquier comunidad, no solo la propia). */
     public void requireCanEditAppearance(UUID communityId, User user) {
         if (user.getRole().ordinal() >= Role.LEADER.ordinal()) {
             return;
         }
-        requireMinRole(communityId, user, CommunityRole.COMMUNITY_ADMIN);
+        requireMinRole(communityId, user, CommunityRole.COMMUNITY_CURATOR);
     }
 }
