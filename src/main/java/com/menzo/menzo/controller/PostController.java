@@ -42,14 +42,18 @@ public class PostController {
 
     @GetMapping("/posts")
     public PageResponse<PostResponse> feed(
-            @PageableDefault(size = 20) Pageable pageable, @AuthenticationPrincipal User viewer) {
-        return postService.listFeed(pageable, viewer);
+            @RequestParam(required = false) UUID communityId,
+            @PageableDefault(size = 20) Pageable pageable,
+            @AuthenticationPrincipal User viewer) {
+        return postService.listFeed(communityId, pageable, viewer);
     }
 
     @GetMapping("/posts/featured")
     public PageResponse<PostResponse> featured(
-            @PageableDefault(size = 20) Pageable pageable, @AuthenticationPrincipal User viewer) {
-        return postService.listFeatured(pageable, viewer);
+            @RequestParam(required = false) UUID communityId,
+            @PageableDefault(size = 20) Pageable pageable,
+            @AuthenticationPrincipal User viewer) {
+        return postService.listFeatured(communityId, pageable, viewer);
     }
 
     @GetMapping("/posts/bookmarked")
@@ -61,9 +65,10 @@ public class PostController {
     @GetMapping("/posts/search")
     public PageResponse<PostResponse> search(
             @RequestParam String query,
+            @RequestParam(required = false) UUID communityId,
             @PageableDefault(size = 20) Pageable pageable,
             @AuthenticationPrincipal User viewer) {
-        return postService.search(query, pageable, viewer);
+        return postService.search(query, communityId, pageable, viewer);
     }
 
     @GetMapping("/users/{id}/posts")

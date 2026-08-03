@@ -11,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.menzo.menzo.domain.communities.Community;
 import com.menzo.menzo.domain.community.CommunityEvent;
 import com.menzo.menzo.domain.community.NotificationCategory;
 import com.menzo.menzo.domain.moderation.ModerationActionType;
@@ -34,6 +35,7 @@ import com.menzo.menzo.dto.post.UpdatePostRequest;
 import com.menzo.menzo.exception.BadRequestException;
 import com.menzo.menzo.exception.ForbiddenException;
 import com.menzo.menzo.exception.NotFoundException;
+import com.menzo.menzo.repository.communities.CommunityRepository;
 import com.menzo.menzo.repository.community.CommunityEventRepository;
 import com.menzo.menzo.repository.post.CommentRepository;
 import com.menzo.menzo.repository.post.PollOptionRepository;
@@ -66,6 +68,7 @@ public class PostService {
     private final ProfileMapper profileMapper;
     private final AdminAuthorizationService adminAuthorizationService;
     private final ModerationLogService moderationLogService;
+    private final CommunityRepository communityRepository;
 
     public PostService(
             PostRepository postRepository,
@@ -79,7 +82,8 @@ public class PostService {
             NotificationService notificationService,
             ProfileMapper profileMapper,
             AdminAuthorizationService adminAuthorizationService,
-            ModerationLogService moderationLogService) {
+            ModerationLogService moderationLogService,
+            CommunityRepository communityRepository) {
         this.postRepository = postRepository;
         this.pollOptionRepository = pollOptionRepository;
         this.pollVoteRepository = pollVoteRepository;
@@ -92,6 +96,7 @@ public class PostService {
         this.profileMapper = profileMapper;
         this.adminAuthorizationService = adminAuthorizationService;
         this.moderationLogService = moderationLogService;
+        this.communityRepository = communityRepository;
     }
 
     @Transactional
@@ -114,6 +119,11 @@ public class PostService {
             CommunityEvent event = communityEventRepository.findById(request.eventId())
                     .orElseThrow(() -> new NotFoundException("Evento no encontrado"));
             post.setEvent(event);
+        }
+        if (request.communityId() != null) {
+            Community community = communityRepository.findById(request.communityId())
+                    .orElseThrow(() -> new NotFoundException("Comunidad no encontrada"));
+            post.setCommunity(community);
         }
 
         // saveAndFlush: @CreationTimestamp recién completa createdAt al ejecutarse el INSERT (al
@@ -149,13 +159,13 @@ public class PostService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<PostResponse> listFeed(Pageable pageable, User viewer) {
-        return toPageResponse(postRepository.findByHiddenFalseOrderByCreatedAtDesc(pageable), viewer);
+    public PageResponse<PostResponse> listFeed(UUID communityId, Pageable pageable, User viewer) {
+        return toPageResponse(postRepository.findFeed(communityId, pageable), viewer);
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<PostResponse> listFeatured(Pageable pageable, User viewer) {
-        return toPageResponse(postRepository.findByFeaturedTrueAndHiddenFalseOrderByCreatedAtDesc(pageable), viewer);
+    public PageResponse<PostResponse> listFeatured(UUID communityId, Pageable pageable, User viewer) {
+        return toPageResponse(postRepository.findFeatured(communityId, pageable), viewer);
     }
 
     @Transactional(readOnly = true)
@@ -169,8 +179,8 @@ public class PostService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<PostResponse> search(String query, Pageable pageable, User viewer) {
-        return toPageResponse(postRepository.search(query, pageable), viewer);
+    public PageResponse<PostResponse> search(String query, UUID communityId, Pageable pageable, User viewer) {
+        return toPageResponse(postRepository.search(query, communityId, pageable), viewer);
     }
 
     /** El autor siempre puede borrar la suya, sin motivo. Un no-autor necesita LEADER+ y un
@@ -464,7 +474,8 @@ public class PostService {
                 post.isFeatured(),
                 post.getCreatedAt(),
                 post.getBlocks(),
-                post.isHidden());
+                post.isHidden(),
+                post.getCommunity() != null ? post.getCommunity().getId() : null);
     }
 
     private CommentResponse toCommentResponse(Comment comment) {

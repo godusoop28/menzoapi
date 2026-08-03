@@ -45,19 +45,23 @@ public class ChatController {
     }
 
     @GetMapping
-    public List<ChatRoomResponse> listRooms(@AuthenticationPrincipal User viewer) {
-        return chatService.listRooms(viewer);
+    public List<ChatRoomResponse> listRooms(
+            @RequestParam(required = false) UUID communityId, @AuthenticationPrincipal User viewer) {
+        return chatService.listRooms(viewer, communityId);
     }
 
     @GetMapping("/discover")
     public List<ChatRoomResponse> discoverRooms(
-            @RequestParam(defaultValue = "recent") String sort, @AuthenticationPrincipal User viewer) {
-        return chatService.listDiscoverRooms(sort, viewer);
+            @RequestParam(defaultValue = "recent") String sort,
+            @RequestParam(required = false) UUID communityId,
+            @AuthenticationPrincipal User viewer) {
+        return chatService.listDiscoverRooms(sort, viewer, communityId);
     }
 
     @GetMapping("/live")
-    public List<ChatRoomResponse> liveRooms(@AuthenticationPrincipal User viewer) {
-        return chatService.listLiveRooms(viewer);
+    public List<ChatRoomResponse> liveRooms(
+            @RequestParam(required = false) UUID communityId, @AuthenticationPrincipal User viewer) {
+        return chatService.listLiveRooms(viewer, communityId);
     }
 
     @PatchMapping("/{id}")

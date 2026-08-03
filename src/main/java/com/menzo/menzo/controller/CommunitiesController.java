@@ -8,8 +8,10 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -21,6 +23,7 @@ import com.menzo.menzo.dto.communities.CommunityDetailDto;
 import com.menzo.menzo.dto.communities.CommunityMembershipDto;
 import com.menzo.menzo.dto.communities.CommunitySummaryDto;
 import com.menzo.menzo.dto.communities.MyCommunityDto;
+import com.menzo.menzo.dto.communities.UpdateCommunityAppearanceRequest;
 import com.menzo.menzo.service.CommunitiesService;
 
 /**
@@ -73,6 +76,16 @@ public class CommunitiesController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void leave(@PathVariable UUID id, @AuthenticationPrincipal User me) {
         communitiesService.leave(id, me);
+    }
+
+    /** COMMUNITY_ADMIN+ de esa comunidad, o staff global LEADER+ — ver
+     * CommunityPermissionEvaluator.requireCanEditAppearance. */
+    @PatchMapping("/{id}/appearance")
+    public CommunityDetailDto updateAppearance(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User me,
+            @RequestBody UpdateCommunityAppearanceRequest request) {
+        return communitiesService.updateAppearance(id, me, request);
     }
 
     /** COMMUNITY_ADMIN+ aprueba/rechaza una solicitud de una comunidad con accessType=REQUEST

@@ -17,6 +17,10 @@ public interface ChatRoomRepository extends JpaRepository<ChatRoom, UUID> {
 
     List<ChatRoom> findByType(RoomType type);
 
+    // Solo para salas PUBLIC — las DIRECT (mensajes privados) nunca tienen comunidad (ver
+    // ChatRoom.community) y se listan aparte, siempre globales (findDirectRoomsForUser).
+    List<ChatRoom> findByTypeAndCommunityId(RoomType type, UUID communityId);
+
     @Query("""
             SELECT r FROM ChatRoom r
             WHERE r.type = com.menzo.menzo.domain.chat.RoomType.DIRECT

@@ -28,5 +28,6 @@ public record CreatePostRequest(
         List<String> tags,
         List<@NotBlank String> pollOptions,
         UUID eventId,
-        List<PostBlock> blocks) {
+        List<PostBlock> blocks,
+        UUID communityId) {
 }

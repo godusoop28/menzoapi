@@ -49,6 +49,7 @@ import com.menzo.menzo.repository.chat.MessageRepository;
 import com.menzo.menzo.repository.chat.RoomBanRepository;
 import com.menzo.menzo.repository.chat.RoomFavoriteRepository;
 import com.menzo.menzo.repository.chat.RoomMemberRepository;
+import com.menzo.menzo.repository.communities.CommunityRepository;
 import com.menzo.menzo.repository.sticker.StickerRepository;
 import com.menzo.menzo.repository.user.UserRepository;
 import com.menzo.menzo.service.mapper.ProfileMapper;
@@ -71,6 +72,7 @@ public class ChatService {
     private final AdminAuthorizationService adminAuthorizationService;
     private final ModerationLogService moderationLogService;
     private final StickerRepository stickerRepository;
+    private final CommunityRepository communityRepository;
 
     public ChatService(
             ChatRoomRepository chatRoomRepository,
@@ -86,7 +88,8 @@ public class ChatService {
             NotificationService notificationService,
             AdminAuthorizationService adminAuthorizationService,
             ModerationLogService moderationLogService,
-            StickerRepository stickerRepository) {
+            StickerRepository stickerRepository,
+            CommunityRepository communityRepository) {
         this.chatRoomRepository = chatRoomRepository;
         this.roomMemberRepository = roomMemberRepository;
         this.roomFavoriteRepository = roomFavoriteRepository;
@@ -101,15 +104,23 @@ public class ChatService {
         this.adminAuthorizationService = adminAuthorizationService;
         this.moderationLogService = moderationLogService;
         this.stickerRepository = stickerRepository;
+        this.communityRepository = communityRepository;
     }
 
-    /** Solo las salas a las que el usuario ya se unió (públicas o directas) — "Mis chats". */
+    /** Solo las salas a las que el usuario ya se unió (públicas o directas) — "Mis chats".
+     * communityId nullable a propósito (ver Contexto §11/§27 del pedido original): sin él, las
+     * salas PUBLIC no se filtran (cubre cualquier llamador viejo) — los clientes actualizados
+     * siempre mandan la comunidad activa. Las salas DIRECT (mensajes privados) NUNCA se filtran
+     * por comunidad, sin importar qué se mande acá — son globales por diseño. */
     @Transactional(readOnly = true)
-    public List<ChatRoomResponse> listRooms(User viewer) {
+    public List<ChatRoomResponse> listRooms(User viewer, UUID communityId) {
         if (viewer == null) {
             return List.of();
         }
-        List<ChatRoom> rooms = new ArrayList<>(chatRoomRepository.findByType(RoomType.PUBLIC).stream()
+        List<ChatRoom> publicRooms = communityId != null
+                ? chatRoomRepository.findByTypeAndCommunityId(RoomType.PUBLIC, communityId)
+                : chatRoomRepository.findByType(RoomType.PUBLIC);
+        List<ChatRoom> rooms = new ArrayList<>(publicRooms.stream()
                 .filter(room -> roomMemberRepository.existsByRoomIdAndUserId(room.getId(), viewer.getId()))
                 .toList());
         rooms.addAll(chatRoomRepository.findDirectRoomsForUser(viewer.getId()));
@@ -147,22 +158,27 @@ public class ChatService {
      * (endStaleSessions) que, por propagación REQUIRED, correría dentro de esta misma
      * transacción — si esta fuera readOnly, Postgres rechaza esa escritura. */
     @Transactional
-    public List<ChatRoomResponse> listLiveRooms(User viewer) {
+    public List<ChatRoomResponse> listLiveRooms(User viewer, UUID communityId) {
         List<UUID> liveRoomIds = voiceService.liveRoomIds();
         if (liveRoomIds.isEmpty()) {
             return List.of();
         }
         return chatRoomRepository.findAllById(liveRoomIds).stream()
+                .filter(room -> communityId == null
+                        || (room.getCommunity() != null && room.getCommunity().getId().equals(communityId)))
                 .map(room -> toRoomResponse(room, viewer))
                 .toList();
     }
 
     /** Todas las salas públicas listadas (listed=true), unidas o no — para descubrir/explorar.
      * Una sala con listed=false (oculta por el OWNER) sigue funcionando normal para quien ya es
-     * miembro, solo no aparece acá. */
+     * miembro, solo no aparece acá. communityId nullable, mismo criterio que listRooms. */
     @Transactional(readOnly = true)
-    public List<ChatRoomResponse> listDiscoverRooms(String sort, User viewer) {
-        List<ChatRoomResponse> rooms = chatRoomRepository.findByType(RoomType.PUBLIC).stream()
+    public List<ChatRoomResponse> listDiscoverRooms(String sort, User viewer, UUID communityId) {
+        List<ChatRoom> publicRooms = communityId != null
+                ? chatRoomRepository.findByTypeAndCommunityId(RoomType.PUBLIC, communityId)
+                : chatRoomRepository.findByType(RoomType.PUBLIC);
+        List<ChatRoomResponse> rooms = publicRooms.stream()
                 .filter(ChatRoom::isListed)
                 .map(room -> toRoomResponse(room, viewer))
                 .collect(Collectors.toCollection(ArrayList::new));
@@ -196,6 +212,10 @@ public class ChatService {
         }
         if (request.icon() != null && !request.icon().isBlank()) {
             room.setIcon(request.icon());
+        }
+        if (request.communityId() != null) {
+            room.setCommunity(communityRepository.findById(request.communityId())
+                    .orElseThrow(() -> new NotFoundException("Comunidad no encontrada")));
         }
         room.setUpdatedAt(Instant.now());
         // saveAndFlush, no save: @CreationTimestamp recién completa createdAt cuando el INSERT
@@ -763,7 +783,8 @@ public class ChatService {
                 liveSummary,
                 room.getCreatedAt(),
                 room.getUpdatedAt(),
-                lastMessage);
+                lastMessage,
+                room.getCommunity() != null ? room.getCommunity().getId() : null);
     }
 
     private ChatRoomResponse.LastMessage toLastMessage(Message message) {

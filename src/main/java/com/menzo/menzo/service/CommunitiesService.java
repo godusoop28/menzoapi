@@ -20,6 +20,7 @@ import com.menzo.menzo.dto.communities.CommunityDetailDto;
 import com.menzo.menzo.dto.communities.CommunityMembershipDto;
 import com.menzo.menzo.dto.communities.CommunitySummaryDto;
 import com.menzo.menzo.dto.communities.MyCommunityDto;
+import com.menzo.menzo.dto.communities.UpdateCommunityAppearanceRequest;
 import com.menzo.menzo.exception.BadRequestException;
 import com.menzo.menzo.exception.ConflictException;
 import com.menzo.menzo.exception.ForbiddenException;
@@ -85,6 +86,35 @@ public class CommunitiesService {
         Community community = requireBySlug(slug);
         permissionEvaluator.requireCanView(community, viewer);
         return toDetail(community, viewer);
+    }
+
+    /** COMMUNITY_ADMIN+ de esa comunidad, o staff global LEADER+ (ver
+     * CommunityPermissionEvaluator.requireCanEditAppearance). Cada campo es null = sin cambios,
+     * "" = limpiar — mismo criterio que ChatService.updateRoom con avatarUri/coverUri. */
+    @Transactional
+    public CommunityDetailDto updateAppearance(UUID communityId, User actor, UpdateCommunityAppearanceRequest request) {
+        Community community = requireById(communityId);
+        permissionEvaluator.requireCanEditAppearance(communityId, actor);
+
+        if (request.iconUrl() != null) community.setIconUrl(request.iconUrl().isBlank() ? null : request.iconUrl());
+        if (request.logoUrl() != null) community.setLogoUrl(request.logoUrl().isBlank() ? null : request.logoUrl());
+        if (request.coverUrl() != null) community.setCoverUrl(request.coverUrl().isBlank() ? null : request.coverUrl());
+        if (request.backgroundUrl() != null) {
+            community.setBackgroundUrl(request.backgroundUrl().isBlank() ? null : request.backgroundUrl());
+        }
+        if (request.bannerUrl() != null) community.setBannerUrl(request.bannerUrl().isBlank() ? null : request.bannerUrl());
+        if (request.primaryColor() != null) {
+            community.setPrimaryColor(request.primaryColor().isBlank() ? null : request.primaryColor());
+        }
+        if (request.secondaryColor() != null) {
+            community.setSecondaryColor(request.secondaryColor().isBlank() ? null : request.secondaryColor());
+        }
+        if (request.accentColor() != null) {
+            community.setAccentColor(request.accentColor().isBlank() ? null : request.accentColor());
+        }
+
+        community = communityRepository.save(community);
+        return toDetail(community, actor);
     }
 
     /** OPEN: se une de inmediato como ACTIVE. REQUEST: queda PENDING (todavía no existe una

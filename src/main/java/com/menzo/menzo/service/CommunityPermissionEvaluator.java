@@ -10,6 +10,7 @@ import com.menzo.menzo.domain.communities.CommunityMembership;
 import com.menzo.menzo.domain.communities.CommunityMembershipStatus;
 import com.menzo.menzo.domain.communities.CommunityRole;
 import com.menzo.menzo.domain.communities.CommunityVisibility;
+import com.menzo.menzo.domain.user.Role;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.exception.ForbiddenException;
 import com.menzo.menzo.repository.communities.CommunityMembershipRepository;
@@ -64,11 +65,28 @@ public class CommunityPermissionEvaluator {
     /** ordinal() da "al menos este nivel" — mismo patrón que AdminAuthorizationService con el
      * Role global. */
     public void requireMinRole(UUID communityId, User user, CommunityRole minRole) {
+        if (hasMinRole(communityId, user, minRole)) {
+            return;
+        }
+        throw new ForbiddenException("No tenés permisos suficientes en esta comunidad");
+    }
+
+    public boolean hasMinRole(UUID communityId, User user, CommunityRole minRole) {
         CommunityRole role = findActiveMembership(communityId, user.getId())
                 .map(CommunityMembership::getCommunityRole)
                 .orElse(null);
-        if (role == null || role.ordinal() < minRole.ordinal()) {
-            throw new ForbiddenException("No tenés permisos suficientes en esta comunidad");
+        return role != null && role.ordinal() >= minRole.ordinal();
+    }
+
+    /** Editar la apariencia (imágenes/colores) de una comunidad — permitido para quien la
+     * administra puntualmente (COMMUNITY_ADMIN+ ahí) O para staff global LEADER+ (mismo criterio
+     * que el resto de esta sesión: LEADER/MASTER tienen autoridad de plataforma sobre cualquier
+     * comunidad, no solo la propia — a diferencia de un COMMUNITY_ADMIN común, que solo administra
+     * la suya). */
+    public void requireCanEditAppearance(UUID communityId, User user) {
+        if (user.getRole().ordinal() >= Role.LEADER.ordinal()) {
+            return;
         }
+        requireMinRole(communityId, user, CommunityRole.COMMUNITY_ADMIN);
     }
 }

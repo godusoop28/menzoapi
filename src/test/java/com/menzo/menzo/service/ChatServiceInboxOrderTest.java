@@ -27,7 +27,7 @@ class ChatServiceInboxOrderTest {
         return new ChatRoomResponse(
                 id, "slug", "Sala", null, null, null, null, "PUBLIC", null, null, null, null, null,
                 false, false, true, null, 0, 0, false, true, "MEMBER", false, null,
-                createdAt, updatedAt, lastMessage);
+                createdAt, updatedAt, lastMessage, null);
     }
 
     @Test

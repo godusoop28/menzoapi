@@ -26,5 +26,6 @@ public record PostResponse(
         boolean featured,
         Instant createdAt,
         List<PostBlock> blocks,
-        boolean hidden) {
+        boolean hidden,
+        UUID communityId) {
 }

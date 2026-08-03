@@ -32,7 +32,8 @@ public record ChatRoomResponse(
         LiveSummary liveSummary,
         Instant createdAt,
         Instant updatedAt,
-        LastMessage lastMessage) {
+        LastMessage lastMessage,
+        UUID communityId) {
 
     public record LastMessage(String body, boolean hasImage, String senderId, Instant createdAt) {
     }
