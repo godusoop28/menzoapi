@@ -5,13 +5,18 @@ import java.util.UUID;
 
 import org.hibernate.annotations.CreationTimestamp;
 
+import com.menzo.menzo.domain.communities.Community;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -78,6 +83,14 @@ public class ChatRoom {
     /** Si aparece en "Chats públicos"/descubrir. Solo el OWNER puede cambiarlo (ver ChatService). */
     @Column(nullable = false)
     private boolean listed = true;
+
+    // Nullable a propósito, y SIEMPRE null para salas DIRECT (ver V29__scope_existing_content_to_naruto.sql
+    // y ChatService.requireCanAccess) — los mensajes privados 1 a 1 son globales por diseño y
+    // nunca deben asociarse a una comunidad. Solo salas PUBLIC lo usan, y todavía no hay flujo de
+    // creación que lo exija (Fase C).
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "community_id")
+    private Community community;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

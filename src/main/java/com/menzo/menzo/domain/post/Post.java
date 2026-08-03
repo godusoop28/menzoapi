@@ -12,6 +12,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
+import com.menzo.menzo.domain.communities.Community;
 import com.menzo.menzo.domain.community.CommunityEvent;
 import com.menzo.menzo.domain.user.User;
 
@@ -100,6 +101,14 @@ public class Post {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "event_id")
     private CommunityEvent event;
+
+    // Nullable a propósito (ver V29__scope_existing_content_to_naruto.sql): todavía no existe un
+    // flujo de creación que exija elegir comunidad (eso es Fase C del sistema de comunidades) —
+    // por ahora todo el contenido existente/nuevo queda igual de visible que antes, este campo
+    // solo registra la asociación para cuando el feed empiece a filtrar por comunidad activa.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "community_id")
+    private Community community;
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "post_tags", joinColumns = @JoinColumn(name = "post_id"))

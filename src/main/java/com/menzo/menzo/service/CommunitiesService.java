@@ -12,6 +12,7 @@ import com.menzo.menzo.domain.communities.Community;
 import com.menzo.menzo.domain.communities.CommunityAccessType;
 import com.menzo.menzo.domain.communities.CommunityMembership;
 import com.menzo.menzo.domain.communities.CommunityMembershipStatus;
+import com.menzo.menzo.domain.communities.CommunityRole;
 import com.menzo.menzo.domain.communities.CommunityStatus;
 import com.menzo.menzo.domain.user.User;
 import com.menzo.menzo.dto.common.PageResponse;
@@ -143,6 +144,38 @@ public class CommunitiesService {
             community.setMemberCount(Math.max(0, community.getMemberCount() - 1));
             communityRepository.save(community);
         }
+    }
+
+    /** Cierra el flujo de acceso REQUEST: la membresía ya quedó creada en PENDING por join()
+     * (ver ahí el porqué de no tener una entidad CommunityJoinRequest aparte todavía). */
+    @Transactional
+    public void approveMembership(UUID communityId, UUID targetUserId, User actor) {
+        permissionEvaluator.requireMinRole(communityId, actor, CommunityRole.COMMUNITY_ADMIN);
+        CommunityMembership membership = requirePendingMembership(communityId, targetUserId);
+        membership.setMembershipStatus(CommunityMembershipStatus.ACTIVE);
+        membershipRepository.save(membership);
+
+        Community community = requireById(communityId);
+        community.setMemberCount(community.getMemberCount() + 1);
+        communityRepository.save(community);
+    }
+
+    @Transactional
+    public void rejectMembership(UUID communityId, UUID targetUserId, User actor) {
+        permissionEvaluator.requireMinRole(communityId, actor, CommunityRole.COMMUNITY_ADMIN);
+        CommunityMembership membership = requirePendingMembership(communityId, targetUserId);
+        membership.setMembershipStatus(CommunityMembershipStatus.REMOVED);
+        membershipRepository.save(membership);
+    }
+
+    private CommunityMembership requirePendingMembership(UUID communityId, UUID targetUserId) {
+        CommunityMembership membership = membershipRepository
+                .findByCommunityIdAndUserId(communityId, targetUserId)
+                .orElseThrow(() -> new NotFoundException("Solicitud no encontrada"));
+        if (membership.getMembershipStatus() != CommunityMembershipStatus.PENDING) {
+            throw new BadRequestException("Esa solicitud ya no está pendiente");
+        }
+        return membership;
     }
 
     private Community requireBySlug(String slug) {

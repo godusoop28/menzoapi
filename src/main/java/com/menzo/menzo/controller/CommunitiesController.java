@@ -74,4 +74,18 @@ public class CommunitiesController {
     public void leave(@PathVariable UUID id, @AuthenticationPrincipal User me) {
         communitiesService.leave(id, me);
     }
+
+    /** COMMUNITY_ADMIN+ aprueba/rechaza una solicitud de una comunidad con accessType=REQUEST
+     * (la membresía ya existe en PENDING desde join()). */
+    @PostMapping("/{id}/members/{userId}/approve")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void approveMembership(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        communitiesService.approveMembership(id, userId, me);
+    }
+
+    @PostMapping("/{id}/members/{userId}/reject")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void rejectMembership(@PathVariable UUID id, @PathVariable UUID userId, @AuthenticationPrincipal User me) {
+        communitiesService.rejectMembership(id, userId, me);
+    }
 }
