@@ -2,6 +2,7 @@ package com.menzo.menzo.dto.communities;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public record CommunityDetailDto(
@@ -39,6 +40,8 @@ public record CommunityDetailDto(
         boolean allowMemberPosts,
         int minimumGlobalLevelToJoin,
         int minimumGlobalLevelToPost,
+        Map<String, Object> themeConfig,
+        Map<String, Object> navigationConfig,
         Instant createdAt,
         CommunityMembershipDto myMembership) {
 }

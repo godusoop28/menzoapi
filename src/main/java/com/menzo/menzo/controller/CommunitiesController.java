@@ -24,6 +24,8 @@ import com.menzo.menzo.dto.communities.CommunityMembershipDto;
 import com.menzo.menzo.dto.communities.CommunitySummaryDto;
 import com.menzo.menzo.dto.communities.MyCommunityDto;
 import com.menzo.menzo.dto.communities.UpdateCommunityAppearanceRequest;
+import com.menzo.menzo.dto.communities.UpdateCommunityNavigationRequest;
+import com.menzo.menzo.dto.communities.UpdateCommunityThemeRequest;
 import com.menzo.menzo.service.CommunitiesService;
 
 /**
@@ -86,6 +88,27 @@ public class CommunitiesController {
             @AuthenticationPrincipal User me,
             @RequestBody UpdateCommunityAppearanceRequest request) {
         return communitiesService.updateAppearance(id, me, request);
+    }
+
+    /** COMMUNITY_ADMIN+ de esa comunidad, o staff global LEADER+ — fondos adicionales
+     * (feed/chat), estilo de encabezado/tarjetas y decoraciones (marcos, insignias, fondos de
+     * temporada), todo dentro de themeConfig (JSONB, shape libre). */
+    @PatchMapping("/{id}/theme")
+    public CommunityDetailDto updateTheme(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User me,
+            @RequestBody UpdateCommunityThemeRequest request) {
+        return communitiesService.updateTheme(id, me, request);
+    }
+
+    /** COMMUNITY_ADMIN+ de esa comunidad, o staff global LEADER+ — qué secciones se muestran en
+     * la navegación de la comunidad, en qué orden y con qué etiqueta. */
+    @PatchMapping("/{id}/navigation")
+    public CommunityDetailDto updateNavigation(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User me,
+            @RequestBody UpdateCommunityNavigationRequest request) {
+        return communitiesService.updateNavigation(id, me, request);
     }
 
     /** COMMUNITY_ADMIN+ aprueba/rechaza una solicitud de una comunidad con accessType=REQUEST

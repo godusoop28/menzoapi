@@ -1,6 +1,7 @@
 package com.menzo.menzo.service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
@@ -21,6 +22,8 @@ import com.menzo.menzo.dto.communities.CommunityMembershipDto;
 import com.menzo.menzo.dto.communities.CommunitySummaryDto;
 import com.menzo.menzo.dto.communities.MyCommunityDto;
 import com.menzo.menzo.dto.communities.UpdateCommunityAppearanceRequest;
+import com.menzo.menzo.dto.communities.UpdateCommunityNavigationRequest;
+import com.menzo.menzo.dto.communities.UpdateCommunityThemeRequest;
 import com.menzo.menzo.exception.BadRequestException;
 import com.menzo.menzo.exception.ConflictException;
 import com.menzo.menzo.exception.ForbiddenException;
@@ -113,6 +116,30 @@ public class CommunitiesService {
             community.setAccentColor(request.accentColor().isBlank() ? null : request.accentColor());
         }
 
+        community = communityRepository.save(community);
+        return toDetail(community, actor);
+    }
+
+    /** Reemplazo completo de themeConfig (fondos adicionales de feed/chat, estilo de
+     * encabezado/tarjetas, lista de decoraciones) — mismo criterio de permisos que
+     * updateAppearance. Reemplaza el mapa entero en vez de mergear campo a campo porque el shape
+     * es libre (JSONB) y el cliente ya arma el objeto completo antes de guardar. */
+    @Transactional
+    public CommunityDetailDto updateTheme(UUID communityId, User actor, UpdateCommunityThemeRequest request) {
+        Community community = requireById(communityId);
+        permissionEvaluator.requireCanEditAppearance(communityId, actor);
+        community.setThemeConfig(request.themeConfig() == null ? Map.of() : request.themeConfig());
+        community = communityRepository.save(community);
+        return toDetail(community, actor);
+    }
+
+    /** Reemplazo completo de navigationConfig (qué secciones se muestran, en qué orden, con qué
+     * etiqueta) — mismos permisos que updateAppearance/updateTheme. */
+    @Transactional
+    public CommunityDetailDto updateNavigation(UUID communityId, User actor, UpdateCommunityNavigationRequest request) {
+        Community community = requireById(communityId);
+        permissionEvaluator.requireCanEditAppearance(communityId, actor);
+        community.setNavigationConfig(request.navigationConfig() == null ? Map.of() : request.navigationConfig());
         community = communityRepository.save(community);
         return toDetail(community, actor);
     }
@@ -281,6 +308,8 @@ public class CommunitiesService {
                 c.isAllowMemberPosts(),
                 c.getMinimumGlobalLevelToJoin(),
                 c.getMinimumGlobalLevelToPost(),
+                c.getThemeConfig(),
+                c.getNavigationConfig(),
                 c.getCreatedAt(),
                 myMembership);
     }
